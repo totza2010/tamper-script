@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      8.0
+// @version      8.2
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -929,38 +929,6 @@
     //  PER-EPISODE RELEASE GROUP EDITOR
     // ══════════════════════════════════════════════════════════════════════════
 
-    /** Match a release-group DOM cell → episode file object from _spData */
-    function getFileFromRow(rgCell) {
-        if (!_spData) return null;
-        const row = rgCell.closest("[class*='Row']") ??
-                    rgCell.closest("[class*='row']") ??
-                    rgCell.parentElement;
-        if (!row) return null;
-
-        // Strategy 1: match by relativePath visible in "Source Path" column (most reliable)
-        const leafEls = [...row.querySelectorAll("*")].filter(
-            el => el.children.length === 0 && el !== rgCell
-        );
-        for (const el of leafEls) {
-            const txt = el.textContent.trim();
-            if (!txt || txt.length < 5) continue;
-            if ((txt.includes("/") || txt.includes("\\")) && /\.\w{2,5}$/.test(txt)) {
-                const file = _spData.files.find(f =>
-                    f.relativePath && (
-                        f.relativePath === txt ||
-                        txt.endsWith(f.relativePath.split(/[/\\]/).pop())
-                    )
-                );
-                if (file) return file;
-            }
-        }
-
-        // Strategy 2: match by release group text content (fallback)
-        const rgText = rgCell.textContent.replace("✎", "").trim();
-        if (rgText) return _spData.files.find(f => (f.releaseGroup || "") === rgText) ?? null;
-        return null;
-    }
-
     /** Open floating Release Group editor anchored to `anchorEl`, editing `file` */
     function openEpRGEditor(anchorEl, file) {
         document.getElementById("ep-rg-popup")?.remove();
@@ -1045,51 +1013,109 @@
             }, true);
         }, 0);
 
-        // Save
+        // Save — PUT → verify → unified rename check
         saveBtn.addEventListener("click", async () => {
             const value = buildValue(netComp.get(), edtComp.get(), audioComp.get(), subComp.get());
             saveBtn.disabled = true;
-            saveBtn.textContent = "Saving…";
+
             try {
+                // 1. PUT
+                saveBtn.textContent = "Saving…";
                 await apiReq("PUT", `/api/v3/episodefile/${file.id}`, {
                     ...file, releaseGroup: value,
                 });
-                // Update cache so re-injection uses fresh data
+
+                // 2. Wait for Sonarr DB commit
+                saveBtn.textContent = "Verifying…";
+                await new Promise(r => setTimeout(r, 500));
+
+                // 3. Re-fetch to confirm the change actually applied
+                const fresh = await apiReq("GET", `/api/v3/episodefile/${file.id}`);
+                if (fresh.releaseGroup !== value) {
+                    throw new Error(`Not saved — got: "${fresh.releaseGroup}"`);
+                }
+
+                // 4. Update local cache with fresh data
                 if (_spData) {
                     const idx = _spData.files.findIndex(f => f.id === file.id);
-                    if (idx !== -1) _spData.files[idx] = { ..._spData.files[idx], releaseGroup: value };
+                    if (idx !== -1) _spData.files[idx] = fresh;
                 }
+
                 popup.remove();
-                // Check if rename is now needed
+
+                // 5. Unified rename mismatch check (same as series-page load)
                 if (_spData?.series) checkRenameMismatch(_spData.series, [file.id]);
+
             } catch (err) {
-                saveBtn.textContent = "✗ Error";
+                const msg = err.message.startsWith("Not saved") ? `✗ ${err.message}` : "✗ Save failed";
+                saveBtn.textContent = msg.slice(0, 34);
                 saveBtn.style.background = "#5c1a1a";
                 setTimeout(() => {
-                    saveBtn.disabled = false;
-                    saveBtn.textContent = "Save";
+                    saveBtn.disabled  = false;
+                    saveBtn.textContent = "Retry";
                     saveBtn.style.background = "";
-                }, 2500);
+                }, 3000);
             }
         });
     }
 
-    /** Inject ✎ edit buttons next to Release Group cells on the series page */
+    /** Inject ✎ edit buttons next to Release Group cells on the series page.
+     *
+     *  Matching strategy — POSITIONAL:
+     *  Collect ALL [class*='releaseGroup'] cells and ALL [class*='relativePath'] cells
+     *  in DOM order. Because Sonarr renders every row in the same column order, index N
+     *  of rgCells always corresponds to index N of pathCells (same row, different column).
+     *  This avoids the "find the row container" problem entirely.
+     */
     function injectEpEditBtns() {
         if (!_spData) return;
         if (!/^\/series\/[^/]+/.test(location.pathname)) return;
 
-        // Sonarr CSS-module class names preserve the prop name (e.g. "EpisodeRow_releaseGroup__xyz")
-        document.querySelectorAll("[class*='releaseGroup']").forEach(cell => {
+        // Gather both column types across the whole page in DOM order
+        const rgCells   = [...document.querySelectorAll("[class*='releaseGroup']")];
+        const pathCells = [...document.querySelectorAll(
+            "[class*='relativePath'],[class*='RelativePath']"
+        )];
+
+        rgCells.forEach((cell, i) => {
             if (cell.dataset.epEditAdded) return;
             cell.dataset.epEditAdded = "true";
 
-            const file = getFileFromRow(cell);
+            // Positional lookup: same index → same row
+            const pathTxt = pathCells[i]?.textContent.trim() ?? "";
+            let file = null;
+
+            if (pathTxt) {
+                // Exact relativePath match (e.g. "Season 1/S01E08 - Title.mkv")
+                file = _spData.files.find(f => f.relativePath === pathTxt);
+
+                if (!file) {
+                    // Filename-only match (strips leading season dir)
+                    const fname = pathTxt.split(/[/\\]/).pop().trim();
+                    if (fname) {
+                        file = _spData.files.find(f =>
+                            f.relativePath?.split(/[/\\]/).pop() === fname
+                        );
+                    }
+                }
+            }
+
+            // Fallback: release-group text — only use when it is unique across files
+            if (!file) {
+                const rgText = cell.textContent.replace("✎", "").trim();
+                if (rgText) {
+                    const matches = _spData.files.filter(f =>
+                        (f.releaseGroup || "") === rgText
+                    );
+                    if (matches.length === 1) file = matches[0];
+                }
+            }
+
             if (!file) return;
 
             const btn = document.createElement("span");
             btn.className   = "ep-rg-edit-btn";
-            btn.title       = "Edit Release Group";
+            btn.title       = `Edit Release Group (${file.releaseGroup || "—"})`;
             btn.textContent = "✎";
             btn.addEventListener("click", e => {
                 e.stopPropagation();
@@ -1104,6 +1130,15 @@
     //  RENAME MISMATCH NOTIFICATION
     // ══════════════════════════════════════════════════════════════════════════
 
+    /**
+     * Unified rename-mismatch checker.
+     * Called from two places:
+     *   1. After per-episode RG edit (fileIds = [id] — check only that file)
+     *   2. Series page load with no prefix files (fileIds undefined — check all)
+     *
+     * Sonarr's /rename endpoint returns files whose current filename differs from
+     * what Sonarr would generate given the current metadata.
+     */
     async function checkRenameMismatch(series, fileIds) {
         if (!series) return;
         try {
