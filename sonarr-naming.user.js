@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      7.0
+// @version      8.0
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -25,6 +25,9 @@
 
 (function () {
     "use strict";
+
+    // Series page data cache (populated by checkSeriesPage, used by injectEpEditBtns)
+    let _spData = null;
 
     // ══════════════════════════════════════════════════════════════════════════
     //  DATA
@@ -763,6 +766,567 @@
     }
 
     // ══════════════════════════════════════════════════════════════════════════
+    //  STYLES — per-episode editor · rename notification · settings panel
+    // ══════════════════════════════════════════════════════════════════════════
+
+    document.head.insertAdjacentHTML("beforeend", `<style>
+/* ── Per-episode edit button ─────────────────────────────────────────────── */
+.ep-rg-edit-btn {
+    margin-left: 5px; padding: 0 5px; border-radius: 4px;
+    border: 1px solid #3a3a55; background: transparent; color: #567;
+    cursor: pointer; font-size: 11px; vertical-align: middle;
+    transition: all .14s; line-height: 1.6; display: inline-block;
+}
+.ep-rg-edit-btn:hover { border-color: #4cc; color: #4cc; background: #0d1a2a; }
+
+/* ── Per-episode RG popup ────────────────────────────────────────────────── */
+#ep-rg-popup {
+    position: fixed; z-index: 10002;
+    background: #1a1a2e; border: 1px solid #3a3a55; border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.75);
+    padding: 14px; width: 420px; max-height: 82vh; overflow-y: auto;
+    font-family: sans-serif; font-size: 13px; color: #e0e0e0;
+}
+.ep-pop-head {
+    font-weight: bold; color: #4cc; margin-bottom: 10px;
+    display: flex; justify-content: space-between; align-items: center;
+}
+.ep-pop-close { cursor: pointer; color: #789; font-size: 16px; }
+.ep-pop-row { margin-bottom: 10px; }
+.ep-pop-lbl {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+    color: #567; margin-bottom: 5px;
+}
+.ep-pop-preview {
+    padding: 5px 10px; border-radius: 5px;
+    background: #111; border: 1px solid #222;
+    font-family: monospace; font-size: 11px; color: #6b6;
+    word-break: break-all; min-height: 22px;
+}
+.ep-pop-preview.has-network { color: #fa0; }
+.ep-pop-preview.empty { color: #444; font-style: italic; }
+.ep-pop-btns { display: flex; gap: 8px; margin-top: 12px; }
+.ep-pop-btn {
+    flex: 1; padding: 7px 0; border: none; border-radius: 6px;
+    font-size: 12px; font-weight: bold; cursor: pointer;
+}
+.ep-pop-cancel { background: #2a2a3a; color: #889; }
+.ep-pop-cancel:hover { background: #3a3a4a; }
+.ep-pop-save { background: #1a5c2a; color: #cfc; }
+.ep-pop-save:hover { background: #247a38; }
+.ep-pop-save:disabled { opacity: .4; cursor: default; }
+
+/* ── Rename mismatch notification ────────────────────────────────────────── */
+#rg-rename-notif {
+    position: fixed; bottom: 24px; right: 24px; z-index: 9997;
+    width: 360px; background: #1a1a2e; border: 1px solid #4a6;
+    border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.65);
+    font-family: sans-serif; font-size: 12px; color: #e0e0e0;
+    display: none; flex-direction: column;
+    transform: translateY(16px); opacity: 0;
+    transition: transform .2s ease, opacity .2s ease;
+}
+#rg-rename-notif.open { display: flex; transform: translateY(0); opacity: 1; }
+.rn-head {
+    background: #0d2a18; padding: 9px 13px; font-weight: bold; color: #4d9;
+    border-bottom: 1px solid #2a4a36; border-radius: 10px 10px 0 0;
+    display: flex; justify-content: space-between; align-items: center;
+}
+.rn-head-close { cursor: pointer; color: #789; font-size: 14px; }
+.rn-body {
+    padding: 10px 13px; display: flex; flex-direction: column;
+    gap: 6px; max-height: 200px; overflow-y: auto;
+}
+.rn-file { background: #111120; border-radius: 5px; padding: 6px 9px; font-family: monospace; font-size: 10px; }
+.rn-old  { color: #fa0; word-break: break-all; }
+.rn-arrow { color: #456; margin: 2px 0; }
+.rn-new  { color: #6d6; word-break: break-all; }
+.rn-btns { display: flex; gap: 8px; padding: 8px 13px 12px; }
+.rn-btn  { flex: 1; padding: 7px 0; border: none; border-radius: 6px; font-size: 12px; font-weight: bold; cursor: pointer; }
+.rn-cancel { background: #2a2a3a; color: #889; }
+.rn-cancel:hover { background: #3a3a4a; }
+.rn-rename-now { background: #1a5c2a; color: #cfc; }
+.rn-rename-now:hover { background: #247a38; }
+.rn-rename-now:disabled { opacity: .4; cursor: default; }
+
+/* ── Settings slide-in panel ─────────────────────────────────────────────── */
+#rg-settings-btn {
+    position: fixed; bottom: 24px; left: 24px; z-index: 9999;
+    width: 34px; height: 34px; border-radius: 17px;
+    background: #1a1a2e; border: 1px solid #2a2a45;
+    color: #567; font-size: 15px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,.4); transition: all .18s; user-select: none;
+}
+#rg-settings-btn:hover { border-color: #4cc; color: #4cc; }
+#rg-settings-panel {
+    position: fixed; top: 0; right: -440px;
+    width: 420px; height: 100vh;
+    background: #12121e; border-left: 1px solid #2a2a40; z-index: 10001;
+    display: flex; flex-direction: column;
+    box-shadow: -8px 0 32px rgba(0,0,0,.65);
+    font-family: sans-serif; font-size: 13px; color: #e0e0e0;
+    transition: right .25s ease; overflow: hidden;
+}
+#rg-settings-panel.open { right: 0; }
+.rgs-head {
+    background: #0d0d1e; padding: 14px 16px;
+    font-size: 14px; font-weight: bold; color: #4cc;
+    border-bottom: 1px solid #2a2a40;
+    display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
+}
+.rgs-close { cursor: pointer; color: #789; font-size: 18px; }
+.rgs-tabs { display: flex; border-bottom: 1px solid #2a2a40; flex-shrink: 0; }
+.rgs-tab {
+    flex: 1; padding: 9px 4px; text-align: center; font-size: 11px;
+    color: #567; cursor: pointer; border-bottom: 2px solid transparent;
+    user-select: none; transition: all .14s;
+}
+.rgs-tab:hover { color: #99b; }
+.rgs-tab.active { color: #4cc; border-bottom-color: #4cc; }
+.rgs-body { flex: 1; overflow-y: auto; padding: 14px; }
+.rgs-section { margin-bottom: 18px; }
+.rgs-section-label {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+    color: #456; margin-bottom: 7px;
+}
+.rgs-desc { font-size: 11px; color: #567; margin-bottom: 8px; line-height: 1.5; }
+.rgs-pills-wrap { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
+.rgs-pill {
+    padding: 4px 10px; border-radius: 12px; border: 1px solid #3a3a55;
+    background: transparent; color: #889; font-size: 11px;
+    cursor: pointer; user-select: none; transition: all .13s;
+    display: flex; align-items: center; gap: 4px;
+}
+.rgs-pill:hover { border-color: #777; color: #bbb; }
+.rgs-pill.active { border-color: #4cc; background: #0d2a33; color: #4ef; }
+.rgs-pill .rgs-x { color: #567; font-size: 12px; transition: color .12s; }
+.rgs-pill:hover .rgs-x { color: #f88; }
+.rgs-add-row { display: flex; gap: 7px; margin-top: 7px; }
+.rgs-input {
+    flex: 1; padding: 5px 9px; background: #1a1a2e;
+    border: 1px solid #3a3a55; border-radius: 6px; color: #ddd; font-size: 12px; outline: none;
+}
+.rgs-input:focus { border-color: #4cc; }
+.rgs-add-btn {
+    padding: 5px 12px; border-radius: 6px; border: 1px solid #4cc;
+    background: transparent; color: #4cc; font-size: 12px; cursor: pointer; transition: all .13s;
+}
+.rgs-add-btn:hover { background: #0d2a33; }
+.rgs-key-box {
+    background: #0d0d1e; border: 1px solid #2a2a40; border-radius: 6px;
+    padding: 8px 11px; font-family: monospace; font-size: 11px; color: #6b9;
+    word-break: break-all; margin-bottom: 6px;
+}
+.rgs-small-btn {
+    padding: 5px 11px; border-radius: 5px; border: 1px solid #3a3a55;
+    background: transparent; color: #889; font-size: 11px; cursor: pointer; transition: all .13s;
+}
+.rgs-small-btn:hover { border-color: #f88; color: #f88; }
+</style>`);
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  PER-EPISODE RELEASE GROUP EDITOR
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /** Match a release-group DOM cell → episode file object from _spData */
+    function getFileFromRow(rgCell) {
+        if (!_spData) return null;
+        const row = rgCell.closest("[class*='Row']") ??
+                    rgCell.closest("[class*='row']") ??
+                    rgCell.parentElement;
+        if (!row) return null;
+
+        // Strategy 1: match by relativePath visible in "Source Path" column (most reliable)
+        const leafEls = [...row.querySelectorAll("*")].filter(
+            el => el.children.length === 0 && el !== rgCell
+        );
+        for (const el of leafEls) {
+            const txt = el.textContent.trim();
+            if (!txt || txt.length < 5) continue;
+            if ((txt.includes("/") || txt.includes("\\")) && /\.\w{2,5}$/.test(txt)) {
+                const file = _spData.files.find(f =>
+                    f.relativePath && (
+                        f.relativePath === txt ||
+                        txt.endsWith(f.relativePath.split(/[/\\]/).pop())
+                    )
+                );
+                if (file) return file;
+            }
+        }
+
+        // Strategy 2: match by release group text content (fallback)
+        const rgText = rgCell.textContent.replace("✎", "").trim();
+        if (rgText) return _spData.files.find(f => (f.releaseGroup || "") === rgText) ?? null;
+        return null;
+    }
+
+    /** Open floating Release Group editor anchored to `anchorEl`, editing `file` */
+    function openEpRGEditor(anchorEl, file) {
+        document.getElementById("ep-rg-popup")?.remove();
+
+        const parsed = parseRG(file.releaseGroup || "");
+        const popup  = document.createElement("div");
+        popup.id     = "ep-rg-popup";
+
+        // Position (keep within viewport)
+        const rect = anchorEl.getBoundingClientRect();
+        popup.style.top  = `${Math.min(rect.bottom + 6, window.innerHeight - 540)}px`;
+        popup.style.left = `${Math.max(4, Math.min(rect.left, window.innerWidth - 434))}px`;
+
+        // Header
+        const head = document.createElement("div");
+        head.className = "ep-pop-head";
+        head.innerHTML = `✎ Edit Release Group <span class="ep-pop-close">✕</span>`;
+        popup.appendChild(head);
+
+        // Network
+        const netRow = makeEpPopRow("Network");
+        const netComp = makeSinglePills(NETWORKS, "net", parsed.network, sync);
+        netRow.appendChild(netComp.el);
+
+        // Edition
+        const edtRow = makeEpPopRow("Edition");
+        const edtComp = makeSinglePills(EDITIONS, "edt", parsed.edition, sync);
+        edtRow.appendChild(edtComp.el);
+
+        // Language (dual)
+        const langRow = makeEpPopRow("Language");
+        const dual = document.createElement("div"); dual.className = "rg-dual";
+        const audioComp = makeLangPicker("Audio",    parsed.audioCodes, sync);
+        const subComp   = makeLangPicker("Subtitle", parsed.subCodes,   sync);
+        dual.append(audioComp.el, subComp.el);
+        langRow.appendChild(dual);
+
+        // Preview
+        const prevRow = makeEpPopRow("Preview");
+        const preview = document.createElement("div");
+        preview.className = "ep-pop-preview empty";
+        preview.textContent = "—";
+        prevRow.appendChild(preview);
+
+        // Buttons
+        const btns      = document.createElement("div"); btns.className = "ep-pop-btns";
+        const cancelBtn = document.createElement("button");
+        cancelBtn.className = "ep-pop-btn ep-pop-cancel"; cancelBtn.textContent = "Cancel";
+        const saveBtn   = document.createElement("button");
+        saveBtn.className   = "ep-pop-btn ep-pop-save";   saveBtn.textContent   = "Save";
+        btns.append(cancelBtn, saveBtn);
+
+        popup.append(netRow, edtRow, langRow, prevRow, btns);
+        document.body.appendChild(popup);
+
+        function makeEpPopRow(label) {
+            const row = document.createElement("div"); row.className = "ep-pop-row";
+            const lbl = document.createElement("div"); lbl.className = "ep-pop-lbl"; lbl.textContent = label;
+            row.appendChild(lbl);
+            return row;
+        }
+
+        function sync() {
+            const val = buildValue(netComp.get(), edtComp.get(), audioComp.get(), subComp.get());
+            preview.textContent = val || "—";
+            preview.className   = "ep-pop-preview" +
+                (!val ? " empty" : netComp.get() || edtComp.get() ? " has-network" : "");
+        }
+        sync();
+
+        const close = () => popup.remove();
+        head.querySelector(".ep-pop-close").addEventListener("click", close);
+        cancelBtn.addEventListener("click", close);
+
+        // Close on outside click
+        setTimeout(() => {
+            document.addEventListener("mousedown", function outside(e) {
+                if (!popup.contains(e.target)) {
+                    popup.remove();
+                    document.removeEventListener("mousedown", outside, true);
+                }
+            }, true);
+        }, 0);
+
+        // Save
+        saveBtn.addEventListener("click", async () => {
+            const value = buildValue(netComp.get(), edtComp.get(), audioComp.get(), subComp.get());
+            saveBtn.disabled = true;
+            saveBtn.textContent = "Saving…";
+            try {
+                await apiReq("PUT", `/api/v3/episodefile/${file.id}`, {
+                    ...file, releaseGroup: value,
+                });
+                // Update cache so re-injection uses fresh data
+                if (_spData) {
+                    const idx = _spData.files.findIndex(f => f.id === file.id);
+                    if (idx !== -1) _spData.files[idx] = { ..._spData.files[idx], releaseGroup: value };
+                }
+                popup.remove();
+                // Check if rename is now needed
+                if (_spData?.series) checkRenameMismatch(_spData.series, [file.id]);
+            } catch (err) {
+                saveBtn.textContent = "✗ Error";
+                saveBtn.style.background = "#5c1a1a";
+                setTimeout(() => {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = "Save";
+                    saveBtn.style.background = "";
+                }, 2500);
+            }
+        });
+    }
+
+    /** Inject ✎ edit buttons next to Release Group cells on the series page */
+    function injectEpEditBtns() {
+        if (!_spData) return;
+        if (!/^\/series\/[^/]+/.test(location.pathname)) return;
+
+        // Sonarr CSS-module class names preserve the prop name (e.g. "EpisodeRow_releaseGroup__xyz")
+        document.querySelectorAll("[class*='releaseGroup']").forEach(cell => {
+            if (cell.dataset.epEditAdded) return;
+            cell.dataset.epEditAdded = "true";
+
+            const file = getFileFromRow(cell);
+            if (!file) return;
+
+            const btn = document.createElement("span");
+            btn.className   = "ep-rg-edit-btn";
+            btn.title       = "Edit Release Group";
+            btn.textContent = "✎";
+            btn.addEventListener("click", e => {
+                e.stopPropagation();
+                const latest = _spData?.files.find(f => f.id === file.id) ?? file;
+                openEpRGEditor(btn, latest);
+            });
+            cell.appendChild(btn);
+        });
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  RENAME MISMATCH NOTIFICATION
+    // ══════════════════════════════════════════════════════════════════════════
+
+    async function checkRenameMismatch(series, fileIds) {
+        if (!series) return;
+        try {
+            const results = await apiReq("GET", `/api/v3/rename?seriesId=${series.id}`);
+            const pending = fileIds
+                ? results.filter(r => fileIds.includes(r.episodeFileId))
+                : results;
+            if (pending.length === 0) return;
+            showRenameNotif(series, pending);
+        } catch (e) { console.warn("[RG Rename]", e.message); }
+    }
+
+    function showRenameNotif(series, items) {
+        document.getElementById("rg-rename-notif")?.remove();
+
+        const notif = document.createElement("div");
+        notif.id    = "rg-rename-notif";
+
+        const fileRows = items.slice(0, 5).map(r => {
+            const oldName = r.existingPath.split(/[/\\]/).pop();
+            const newName = r.newPath.split(/[/\\]/).pop();
+            return `<div class="rn-file">
+                <div class="rn-old">${oldName}</div>
+                <div class="rn-arrow">↓</div>
+                <div class="rn-new">${newName}</div>
+            </div>`;
+        }).join("");
+        const more = items.length > 5
+            ? `<div style="color:#567;font-size:11px;padding:3px 0">…and ${items.length - 5} more</div>` : "";
+
+        notif.innerHTML = `
+            <div class="rn-head">
+                🔄 ${items.length} file${items.length > 1 ? "s" : ""} need renaming
+                <span class="rn-head-close">✕</span>
+            </div>
+            <div class="rn-body">${fileRows}${more}</div>
+            <div class="rn-btns">
+                <button class="rn-btn rn-cancel">Dismiss</button>
+                <button class="rn-btn rn-rename-now" id="rn-do-rename">Rename Now</button>
+            </div>`;
+
+        document.body.appendChild(notif);
+        // Force reflow so transition plays
+        requestAnimationFrame(() => requestAnimationFrame(() => notif.classList.add("open")));
+
+        notif.querySelector(".rn-head-close").addEventListener("click", () => notif.remove());
+        notif.querySelector(".rn-cancel").addEventListener("click",     () => notif.remove());
+
+        notif.querySelector("#rn-do-rename").addEventListener("click", async () => {
+            const btn = notif.querySelector("#rn-do-rename");
+            btn.disabled = true; btn.textContent = "Renaming…";
+            try {
+                await apiReq("POST", "/api/v3/command", {
+                    name: "RenameFiles",
+                    seriesId: series.id,
+                    files: items.map(r => r.episodeFileId),
+                });
+                btn.textContent = "✓ Done";
+                setTimeout(() => notif.remove(), 2000);
+            } catch (e) {
+                btn.textContent = "✗ Error"; btn.disabled = false;
+                setTimeout(() => { btn.textContent = "Rename Now"; }, 2500);
+            }
+        });
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  SETTINGS DASHBOARD
+    // ══════════════════════════════════════════════════════════════════════════
+
+    const SETTINGS_KEY = `rg_settings_${location.hostname}`;
+    function loadSettings() {
+        try { return JSON.parse(GM_getValue(SETTINGS_KEY, "{}")); } catch { return {}; }
+    }
+    function saveSettings(obj) { GM_setValue(SETTINGS_KEY, JSON.stringify(obj)); }
+
+    // Apply saved custom networks on startup (runs after NETWORKS const is set)
+    ;(function applySavedNetworks() {
+        (loadSettings().customNetworks ?? []).forEach(n => {
+            if (!NETWORKS.find(x => x.value === n)) NETWORKS.push({ label: n, value: n });
+        });
+    })();
+
+    function buildSettingsPanel() {
+        document.getElementById("rg-settings-panel")?.remove();
+        const panel    = document.createElement("div");
+        panel.id       = "rg-settings-panel";
+        const settings = loadSettings();
+        const customNets = settings.customNetworks   ?? [];
+        const disabledQ  = settings.disabledQualities ?? [];
+
+        panel.innerHTML = `
+            <div class="rgs-head">⚙ Script Settings <span class="rgs-close">✕</span></div>
+            <div class="rgs-tabs">
+                <div class="rgs-tab active" data-tab="networks">Networks</div>
+                <div class="rgs-tab" data-tab="quality">Quality</div>
+                <div class="rgs-tab" data-tab="api">API Key</div>
+            </div>
+            <div class="rgs-body" id="rgs-body"></div>`;
+
+        document.body.appendChild(panel);
+        requestAnimationFrame(() => panel.classList.add("open"));
+        panel.querySelector(".rgs-close").addEventListener("click", () => panel.classList.remove("open"));
+
+        const tabs = [...panel.querySelectorAll(".rgs-tab")];
+        tabs.forEach(t => t.addEventListener("click", () => {
+            tabs.forEach(x => x.classList.toggle("active", x === t));
+            renderTab(t.dataset.tab);
+        }));
+
+        function renderTab(name) {
+            const body = panel.querySelector("#rgs-body");
+            body.innerHTML = "";
+
+            if (name === "networks") {
+                // Default networks (read-only display)
+                const defSec = document.createElement("div");
+                defSec.className = "rgs-section";
+                defSec.innerHTML = `<div class="rgs-section-label">Default Networks</div>
+                    <div class="rgs-pills-wrap">${
+                        NETWORKS.filter(n => !customNets.includes(n.value))
+                            .map(n => `<span class="rgs-pill active" style="cursor:default">${n.label}</span>`).join("")
+                    }</div>`;
+                body.appendChild(defSec);
+
+                // Custom networks (editable)
+                const custSec = document.createElement("div");
+                custSec.className = "rgs-section";
+
+                function renderCustom() {
+                    custSec.innerHTML = `<div class="rgs-section-label">Custom Networks</div>
+                        <div class="rgs-desc">Added networks appear in the Release Group picker.</div>`;
+                    const wrap = document.createElement("div"); wrap.className = "rgs-pills-wrap";
+                    customNets.forEach((n, i) => {
+                        const pill = document.createElement("span"); pill.className = "rgs-pill active";
+                        pill.innerHTML = `${n} <span class="rgs-x">×</span>`;
+                        pill.querySelector(".rgs-x").addEventListener("click", () => {
+                            customNets.splice(i, 1);
+                            settings.customNetworks = customNets;
+                            saveSettings(settings);
+                            const ni = NETWORKS.findIndex(x => x.value === n);
+                            if (ni !== -1) NETWORKS.splice(ni, 1);
+                            renderCustom();
+                        });
+                        wrap.appendChild(pill);
+                    });
+                    custSec.appendChild(wrap);
+                    const addRow = document.createElement("div"); addRow.className = "rgs-add-row";
+                    addRow.innerHTML = `<input class="rgs-input" id="rgs-net-in" placeholder="e.g. Peacock">
+                                        <button class="rgs-add-btn">Add</button>`;
+                    addRow.querySelector(".rgs-add-btn").addEventListener("click", () => {
+                        const inp = addRow.querySelector("#rgs-net-in");
+                        const val = inp.value.trim();
+                        if (!val || NETWORKS.find(x => x.label === val || x.value === val)) return;
+                        customNets.push(val);
+                        settings.customNetworks = customNets;
+                        saveSettings(settings);
+                        NETWORKS.push({ label: val, value: val });
+                        inp.value = "";
+                        renderCustom();
+                    });
+                    custSec.appendChild(addRow);
+                }
+                renderCustom();
+                body.appendChild(custSec);
+            }
+
+            if (name === "quality") {
+                const sec = document.createElement("div"); sec.className = "rgs-section";
+                sec.innerHTML = `<div class="rgs-section-label">Quality Shortcut Pills</div>
+                    <div class="rgs-desc">Toggle which qualities appear as quick-select pills in the Quality modal.</div>`;
+                const wrap = document.createElement("div"); wrap.className = "rgs-pills-wrap";
+                QUALITIES.forEach(q => {
+                    const on   = !disabledQ.includes(q.name);
+                    const pill = document.createElement("span");
+                    pill.className = `rgs-pill${on ? " active" : ""}`;
+                    pill.textContent = q.label;
+                    pill.addEventListener("click", () => {
+                        const i = disabledQ.indexOf(q.name);
+                        if (i === -1) { disabledQ.push(q.name); pill.classList.remove("active"); }
+                        else          { disabledQ.splice(i, 1); pill.classList.add("active"); }
+                        settings.disabledQualities = disabledQ;
+                        saveSettings(settings);
+                    });
+                    wrap.appendChild(pill);
+                });
+                sec.appendChild(wrap);
+                body.appendChild(sec);
+            }
+
+            if (name === "api") {
+                const sec = document.createElement("div"); sec.className = "rgs-section";
+                const key = GM_getValue(APIKEY_KEY, "");
+                sec.innerHTML = `<div class="rgs-section-label">API Key — ${location.hostname}</div>
+                    <div class="rgs-desc">Auto-prompted when missing. Required for series-page features.</div>
+                    <div class="rgs-key-box">${key ? key.slice(0, 8) + "••••••••••••••••••••••••" : "(not set)"}</div>
+                    <button class="rgs-small-btn" id="rgs-reset-key">Clear &amp; Reset</button>`;
+                sec.querySelector("#rgs-reset-key").addEventListener("click", () => {
+                    GM_setValue(APIKEY_KEY, "");
+                    sec.querySelector(".rgs-key-box").textContent = "(cleared — will prompt on next use)";
+                });
+                body.appendChild(sec);
+            }
+        }
+
+        renderTab("networks");
+    }
+
+    // Persistent ⚙ settings button
+    ;(function initSettingsBtn() {
+        const btn = document.createElement("div");
+        btn.id    = "rg-settings-btn";
+        btn.title = "Script Settings";
+        btn.textContent = "⚙";
+        btn.addEventListener("click", () => {
+            const p = document.getElementById("rg-settings-panel");
+            if (p?.classList.contains("open")) p.classList.remove("open");
+            else buildSettingsPanel();
+        });
+        document.body.appendChild(btn);
+    })();
+
+    // ══════════════════════════════════════════════════════════════════════════
     //  SERIES PAGE — Auto-detect [network]- prefix in Release Group
     // ══════════════════════════════════════════════════════════════════════════
 
@@ -867,6 +1431,8 @@
     async function checkSeriesPage() {
         document.getElementById("rg-fix-fab")?.remove();
         document.getElementById("rg-fix-panel")?.remove();
+        document.getElementById("rg-rename-notif")?.remove();
+        _spData = null;
 
         const m = location.pathname.match(/^\/series\/([^/]+)/);
         if (!m) return;
@@ -885,6 +1451,10 @@
                 episodes.filter(e => e.episodeFileId).map(e => [e.episodeFileId, e])
             );
 
+            // Cache data for per-episode edit buttons
+            _spData = { series, files, epMap };
+            injectEpEditBtns();
+
             const affected = files
                 .filter(f => RG_PREFIX_RE.test(f.releaseGroup || ""))
                 .map(f => ({
@@ -897,8 +1467,12 @@
                     return ds !== 0 ? ds : (a.ep?.episodeNumber ?? 0) - (b.ep?.episodeNumber ?? 0);
                 });
 
-            if (affected.length === 0) return;
-            buildFixUI(series, affected);
+            if (affected.length > 0) {
+                buildFixUI(series, affected);
+            } else {
+                // No prefix-fix files — show general rename notification if any files mismatch
+                checkRenameMismatch(series);
+            }
 
         } catch (e) { console.warn("[RG Fix]", e.message); }
     }
@@ -1160,6 +1734,9 @@
             const modalInner = enhancedSelect.closest("[class*='ModalBody-innerModalBody']");
             if (modalInner) injectQualityPills(modalInner);
         }
+
+        // Per-episode edit buttons (series page)
+        injectEpEditBtns();
 
     }).observe(document.body, { childList: true, subtree: true });
 
