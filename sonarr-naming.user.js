@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      8.2
+// @version      8.3
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -816,6 +816,23 @@
 .ep-pop-save:hover { background: #247a38; }
 .ep-pop-save:disabled { opacity: .4; cursor: default; }
 
+/* ── Episode info box (inside popup) ─────────────────────────────────────── */
+.ep-pop-epinfo {
+    margin-bottom: 10px; padding: 8px 10px;
+    background: #0d0d1e; border: 1px solid #2a2a40; border-radius: 6px;
+    font-size: 11px; color: #aab;
+}
+.ep-pop-epinfo-label { font-weight: bold; color: #7dd; margin-bottom: 3px; font-size: 12px; }
+.ep-pop-epinfo-path {
+    color: #567; font-family: monospace; font-size: 10px;
+    word-break: break-all; margin-bottom: 3px;
+}
+.ep-pop-epinfo-rg { color: #fa0; font-size: 10px; }
+.ep-pop-epinfo-rg code {
+    background: #1a1000; border-radius: 3px;
+    padding: 1px 5px; font-family: monospace;
+}
+
 /* ── Rename mismatch notification ────────────────────────────────────────── */
 #rg-rename-notif {
     position: fixed; bottom: 24px; right: 24px; z-index: 9997;
@@ -929,8 +946,12 @@
     //  PER-EPISODE RELEASE GROUP EDITOR
     // ══════════════════════════════════════════════════════════════════════════
 
-    /** Open floating Release Group editor anchored to `anchorEl`, editing `file` */
-    function openEpRGEditor(anchorEl, file) {
+    /** Open floating Release Group editor anchored to `anchorEl`, editing `file`.
+     *  @param {Element}  anchorEl  – the ✎ button element
+     *  @param {Object}   file      – episode file object from _spData.files
+     *  @param {Object}   [ep]      – episode metadata from _spData.epMap (optional)
+     */
+    function openEpRGEditor(anchorEl, file, ep = null) {
         document.getElementById("ep-rg-popup")?.remove();
 
         const parsed = parseRG(file.releaseGroup || "");
@@ -939,7 +960,7 @@
 
         // Position (keep within viewport)
         const rect = anchorEl.getBoundingClientRect();
-        popup.style.top  = `${Math.min(rect.bottom + 6, window.innerHeight - 540)}px`;
+        popup.style.top  = `${Math.min(rect.bottom + 6, window.innerHeight - 580)}px`;
         popup.style.left = `${Math.max(4, Math.min(rect.left, window.innerWidth - 434))}px`;
 
         // Header
@@ -947,6 +968,20 @@
         head.className = "ep-pop-head";
         head.innerHTML = `✎ Edit Release Group <span class="ep-pop-close">✕</span>`;
         popup.appendChild(head);
+
+        // Episode info box (for re-verification)
+        const epLabel = ep ? fmtEp(ep) : "";
+        const epTitle = ep?.title ?? "";
+        const fname   = file.relativePath?.split(/[/\\]/).pop() ?? "";
+        if (epLabel || fname) {
+            const info = document.createElement("div");
+            info.className = "ep-pop-epinfo";
+            info.innerHTML = `
+                ${epLabel ? `<div class="ep-pop-epinfo-label">${epLabel}${epTitle ? ` — ${epTitle}` : ""}</div>` : ""}
+                ${fname   ? `<div class="ep-pop-epinfo-path">${fname}</div>` : ""}
+                <div class="ep-pop-epinfo-rg">Current RG: <code>${file.releaseGroup || "(none)"}</code></div>`;
+            popup.appendChild(info);
+        }
 
         // Network
         const netRow = makeEpPopRow("Network");
@@ -1061,66 +1096,89 @@
 
     /** Inject ✎ edit buttons next to Release Group cells on the series page.
      *
-     *  Matching strategy — POSITIONAL:
-     *  Collect ALL [class*='releaseGroup'] cells and ALL [class*='relativePath'] cells
-     *  in DOM order. Because Sonarr renders every row in the same column order, index N
-     *  of rgCells always corresponds to index N of pathCells (same row, different column).
-     *  This avoids the "find the row container" problem entirely.
+     *  Matching strategy (based on actual Sonarr HTML):
+     *  - Target <td class*='releaseGroup'> (data cells, not the <th> header)
+     *  - Climb to the parent <tr> (standard HTML table row)
+     *  - Find "Relative Path" column index from <th label="Relative Path"> in the header
+     *  - Read tr.cells[pathColIdx] to get the path text for THIS row
+     *  - Fallback: scan all <td> siblings for a cell that looks like a file path
      */
     function injectEpEditBtns() {
         if (!_spData) return;
         if (!/^\/series\/[^/]+/.test(location.pathname)) return;
 
-        // Gather both column types across the whole page in DOM order
-        const rgCells   = [...document.querySelectorAll("[class*='releaseGroup']")];
-        const pathCells = [...document.querySelectorAll(
-            "[class*='relativePath'],[class*='RelativePath']"
-        )];
+        // Determine "Relative Path" column index once from the <thead>
+        // Sonarr marks column headers with a `label` attribute
+        const headerThs = [...document.querySelectorAll("table thead th, thead th")];
+        const pathColIdx = headerThs.findIndex(th =>
+            th.getAttribute("label") === "Relative Path" ||
+            th.textContent.trim() === "Relative Path"
+        );
 
-        rgCells.forEach((cell, i) => {
+        // Use td selector to skip the <th> header cell (which also contains "releaseGroup" text)
+        document.querySelectorAll("td[class*='releaseGroup']").forEach(cell => {
             if (cell.dataset.epEditAdded) return;
             cell.dataset.epEditAdded = "true";
 
-            // Positional lookup: same index → same row
-            const pathTxt = pathCells[i]?.textContent.trim() ?? "";
-            let file = null;
+            const tr = cell.closest("tr");
+            if (!tr) return;
 
-            if (pathTxt) {
-                // Exact relativePath match (e.g. "Season 1/S01E08 - Title.mkv")
-                file = _spData.files.find(f => f.relativePath === pathTxt);
+            // Method 1: use column index from header label
+            let pathTxt = pathColIdx >= 0
+                ? (tr.cells[pathColIdx]?.textContent.trim() ?? "")
+                : "";
 
-                if (!file) {
-                    // Filename-only match (strips leading season dir)
-                    const fname = pathTxt.split(/[/\\]/).pop().trim();
-                    if (fname) {
-                        file = _spData.files.find(f =>
-                            f.relativePath?.split(/[/\\]/).pop() === fname
-                        );
+            // Method 2: scan sibling <td> cells for path-like content (fallback)
+            if (!pathTxt) {
+                for (const td of tr.cells) {
+                    if (td === cell) continue;
+                    const t = td.textContent.trim();
+                    if (t.length > 8 && t.includes("/") && /\.\w{2,5}$/.test(t)) {
+                        pathTxt = t;
+                        break;
                     }
                 }
             }
 
-            // Fallback: release-group text — only use when it is unique across files
+            let file = null;
+            if (pathTxt) {
+                // Exact relativePath match
+                file = _spData.files.find(f => f.relativePath === pathTxt);
+                // Filename-only match (strips leading season directory)
+                if (!file) {
+                    const fname = pathTxt.split(/[/\\]/).pop().trim();
+                    if (fname) file = _spData.files.find(f =>
+                        f.relativePath?.split(/[/\\]/).pop() === fname
+                    );
+                }
+            }
+
+            // Last resort: unique release-group text (only safe if exactly 1 file has that RG)
             if (!file) {
                 const rgText = cell.textContent.replace("✎", "").trim();
                 if (rgText) {
-                    const matches = _spData.files.filter(f =>
-                        (f.releaseGroup || "") === rgText
-                    );
-                    if (matches.length === 1) file = matches[0];
+                    const hits = _spData.files.filter(f => (f.releaseGroup || "") === rgText);
+                    if (hits.length === 1) file = hits[0];
                 }
             }
 
             if (!file) return;
 
+            const ep = _spData.epMap.get(file.id);
+
             const btn = document.createElement("span");
-            btn.className   = "ep-rg-edit-btn";
-            btn.title       = `Edit Release Group (${file.releaseGroup || "—"})`;
-            btn.textContent = "✎";
+            btn.className    = "ep-rg-edit-btn";
+            btn.title        = ep
+                ? `Edit RG — ${fmtEp(ep)} ${ep.title ?? ""} (${file.releaseGroup || "—"})`
+                : `Edit Release Group (${file.releaseGroup || "—"})`;
+            btn.textContent  = "✎";
+            btn.dataset.fileId = String(file.id); // visible in DevTools for debugging
+
             btn.addEventListener("click", e => {
                 e.stopPropagation();
-                const latest = _spData?.files.find(f => f.id === file.id) ?? file;
-                openEpRGEditor(btn, latest);
+                const latest   = _spData?.files.find(f => f.id === file.id) ?? file;
+                const latestEp = _spData?.epMap.get(latest.id);
+                openEpRGEditor(btn, latest, latestEp);
             });
             cell.appendChild(btn);
         });
