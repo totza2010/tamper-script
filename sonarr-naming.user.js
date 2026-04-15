@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      8.3
+// @version      8.4
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -958,10 +958,26 @@
         const popup  = document.createElement("div");
         popup.id     = "ep-rg-popup";
 
-        // Position (keep within viewport)
-        const rect = anchorEl.getBoundingClientRect();
-        popup.style.top  = `${Math.min(rect.bottom + 6, window.innerHeight - 580)}px`;
-        popup.style.left = `${Math.max(4, Math.min(rect.left, window.innerWidth - 434))}px`;
+        // Position — prefer below the button; flip above if insufficient room.
+        // max-height is set dynamically so overflow-y: auto always has a constrained box to scroll within.
+        const rect   = anchorEl.getBoundingClientRect();
+        const MARGIN = 10;
+        const spaceBelow = window.innerHeight - rect.bottom - MARGIN;
+        const spaceAbove = rect.top - MARGIN;
+        let topPx, maxH;
+        if (spaceBelow >= 220 || spaceBelow >= spaceAbove) {
+            // Open downward
+            topPx = rect.bottom + 6;
+            maxH  = spaceBelow - 6;
+        } else {
+            // Open upward — estimate height then anchor bottom to button top
+            const estimatedH = Math.min(560, spaceAbove);
+            topPx = Math.max(MARGIN, rect.top - estimatedH - 6);
+            maxH  = spaceAbove - 6;
+        }
+        popup.style.top       = `${Math.max(MARGIN, topPx)}px`;
+        popup.style.maxHeight = `${Math.max(180, maxH)}px`;
+        popup.style.left      = `${Math.max(4, Math.min(rect.left, window.innerWidth - 434))}px`;
 
         // Header
         const head = document.createElement("div");
@@ -1078,7 +1094,31 @@
 
                 popup.remove();
 
-                // 5. Unified rename mismatch check (same as series-page load)
+                // 5a. Immediately update the Release Group cell text in the DOM.
+                //     React may not re-render until Sonarr gets a SignalR push, so we patch
+                //     the text node directly so the user sees the new value right away.
+                try {
+                    const rgCell = anchorEl.parentElement; // anchorEl = ✎ btn inside <td>
+                    if (rgCell && rgCell.matches("td[class*='releaseGroup']")) {
+                        // React renders the RG value as a plain text node before our button
+                        const textNode = [...rgCell.childNodes]
+                            .find(n => n.nodeType === Node.TEXT_NODE);
+                        if (textNode) {
+                            textNode.textContent = value;
+                        } else {
+                            rgCell.insertBefore(document.createTextNode(value), anchorEl);
+                        }
+                        // Refresh button tooltip with new value
+                        const latestEp = _spData?.epMap.get(file.id);
+                        anchorEl.title = latestEp
+                            ? `Edit RG — ${fmtEp(latestEp)} ${latestEp.title ?? ""} (${value || "—"})`
+                            : `Edit Release Group (${value || "—"})`;
+                        // Clear flag so MutationObserver re-inject refreshes if React re-renders
+                        delete rgCell.dataset.epEditAdded;
+                    }
+                } catch (_) { /* DOM update is best-effort; ignore errors */ }
+
+                // 5b. Unified rename mismatch check (same as series-page load)
                 if (_spData?.series) checkRenameMismatch(_spData.series, [file.id]);
 
             } catch (err) {
