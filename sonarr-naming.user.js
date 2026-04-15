@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      8.4
+// @version      8.5
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -1113,8 +1113,10 @@
                         anchorEl.title = latestEp
                             ? `Edit RG — ${fmtEp(latestEp)} ${latestEp.title ?? ""} (${value || "—"})`
                             : `Edit Release Group (${value || "—"})`;
-                        // Clear flag so MutationObserver re-inject refreshes if React re-renders
-                        delete rgCell.dataset.epEditAdded;
+                        // NOTE: intentionally do NOT delete epEditAdded —
+                        // deleting it causes MutationObserver to inject a duplicate button.
+                        // The click handler always reads _spData.files (updated in step 4)
+                        // so the existing button stays up-to-date without re-injection.
                     }
                 } catch (_) { /* DOM update is best-effort; ignore errors */ }
 
@@ -1154,6 +1156,12 @@
             th.getAttribute("label") === "Relative Path" ||
             th.textContent.trim() === "Relative Path"
         );
+
+        // Remove any stale duplicate buttons (can happen after page re-renders)
+        document.querySelectorAll("td[class*='releaseGroup']").forEach(cell => {
+            const btns = [...cell.querySelectorAll(".ep-rg-edit-btn")];
+            if (btns.length > 1) btns.slice(1).forEach(b => b.remove());
+        });
 
         // Use td selector to skip the <th> header cell (which also contains "releaseGroup" text)
         document.querySelectorAll("td[class*='releaseGroup']").forEach(cell => {
@@ -1459,6 +1467,41 @@
         document.body.appendChild(btn);
     })();
 
+    // Persistent 🔍 rename-check floating button (series page only)
+    document.head.insertAdjacentHTML("beforeend", `<style>
+#rg-check-btn {
+    position: fixed; bottom: 66px; left: 24px; z-index: 9999;
+    width: 34px; height: 34px; border-radius: 17px;
+    background: #1a1a2e; border: 1px solid #2a2a45;
+    color: #567; font-size: 15px; cursor: pointer;
+    display: none; align-items: center; justify-content: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,.4); transition: all .18s; user-select: none;
+}
+#rg-check-btn.visible { display: flex; }
+#rg-check-btn:hover   { border-color: #4ad; color: #4ad; }
+#rg-check-btn.spinning { color: #fa0; border-color: #fa0; animation: rg-spin .8s linear infinite; }
+@keyframes rg-spin { to { transform: rotate(360deg); } }
+</style>`);
+
+    ;(function initRenameCheckBtn() {
+        const btn = document.createElement("div");
+        btn.id    = "rg-check-btn";
+        btn.title = "Check rename mismatches now";
+        btn.textContent = "↺";
+        btn.addEventListener("click", async () => {
+            if (!_spData?.series || btn.classList.contains("spinning")) return;
+            btn.classList.add("spinning");
+            try {
+                // Dismiss old notification so result is always fresh
+                document.getElementById("rg-rename-notif")?.remove();
+                await checkRenameMismatch(_spData.series);
+            } finally {
+                btn.classList.remove("spinning");
+            }
+        });
+        document.body.appendChild(btn);
+    })();
+
     // ══════════════════════════════════════════════════════════════════════════
     //  SERIES PAGE — Auto-detect [network]- prefix in Release Group
     // ══════════════════════════════════════════════════════════════════════════
@@ -1566,6 +1609,7 @@
         document.getElementById("rg-fix-panel")?.remove();
         document.getElementById("rg-rename-notif")?.remove();
         _spData = null;
+        document.getElementById("rg-check-btn")?.classList.remove("visible");
 
         const m = location.pathname.match(/^\/series\/([^/]+)/);
         if (!m) return;
@@ -1586,6 +1630,7 @@
 
             // Cache data for per-episode edit buttons
             _spData = { series, files, epMap };
+            document.getElementById("rg-check-btn")?.classList.add("visible");
             injectEpEditBtns();
 
             const affected = files
