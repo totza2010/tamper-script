@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      8.5
+// @version      8.6
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -1467,32 +1467,58 @@
         document.body.appendChild(btn);
     })();
 
-    // Persistent 🔍 rename-check floating button (series page only)
+    // Persistent floating buttons — series page only (↺ rename-check · ✂ strip-prefix)
     document.head.insertAdjacentHTML("beforeend", `<style>
-#rg-check-btn {
-    position: fixed; bottom: 66px; left: 24px; z-index: 9999;
+/* shared style for both series-page FABs */
+.rg-fab-side {
+    position: fixed; left: 24px; z-index: 9999;
     width: 34px; height: 34px; border-radius: 17px;
     background: #1a1a2e; border: 1px solid #2a2a45;
     color: #567; font-size: 15px; cursor: pointer;
     display: none; align-items: center; justify-content: center;
     box-shadow: 0 2px 8px rgba(0,0,0,.4); transition: all .18s; user-select: none;
 }
-#rg-check-btn.visible { display: flex; }
+.rg-fab-side.visible { display: flex; }
+#rg-check-btn { bottom: 66px; }
 #rg-check-btn:hover   { border-color: #4ad; color: #4ad; }
 #rg-check-btn.spinning { color: #fa0; border-color: #fa0; animation: rg-spin .8s linear infinite; }
+#rg-strip-btn { bottom: 108px; }
+#rg-strip-btn:hover   { border-color: #6d6; color: #6d6; }
+#rg-strip-btn.spinning { color: #fa0; border-color: #fa0; animation: rg-spin .8s linear infinite; }
 @keyframes rg-spin { to { transform: rotate(360deg); } }
+/* brief toast */
+#rg-toast {
+    position: fixed; bottom: 70px; left: 70px; z-index: 10003;
+    background: #0d200d; border: 1px solid #4a6; color: #6d6;
+    padding: 7px 14px; border-radius: 8px;
+    font-size: 12px; font-family: sans-serif;
+    box-shadow: 0 2px 10px rgba(0,0,0,.5);
+    pointer-events: none;
+    animation: rg-fadein .15s ease;
+}
+@keyframes rg-fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
 </style>`);
 
+    function showToast(msg, ms = 3000) {
+        document.getElementById("rg-toast")?.remove();
+        const t = document.createElement("div");
+        t.id = "rg-toast";
+        t.textContent = msg;
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), ms);
+    }
+
+    // ↺ Rename-check button
     ;(function initRenameCheckBtn() {
         const btn = document.createElement("div");
-        btn.id    = "rg-check-btn";
-        btn.title = "Check rename mismatches now";
+        btn.id        = "rg-check-btn";
+        btn.className = "rg-fab-side";
+        btn.title     = "Check rename mismatches now";
         btn.textContent = "↺";
         btn.addEventListener("click", async () => {
             if (!_spData?.series || btn.classList.contains("spinning")) return;
             btn.classList.add("spinning");
             try {
-                // Dismiss old notification so result is always fresh
                 document.getElementById("rg-rename-notif")?.remove();
                 await checkRenameMismatch(_spData.series);
             } finally {
@@ -1501,6 +1527,58 @@
         });
         document.body.appendChild(btn);
     })();
+
+    // ✂ Strip-prefix recheck button
+    ;(function initStripCheckBtn() {
+        const btn = document.createElement("div");
+        btn.id        = "rg-strip-btn";
+        btn.className = "rg-fab-side";
+        btn.title     = "Re-check [prefix]- Release Group files";
+        btn.textContent = "✂";
+        btn.addEventListener("click", async () => {
+            if (!_spData?.series || btn.classList.contains("spinning")) return;
+            btn.classList.add("spinning");
+            try {
+                await recheckPrefixFiles();
+            } finally {
+                btn.classList.remove("spinning");
+            }
+        });
+        document.body.appendChild(btn);
+    })();
+
+    /** Re-fetch episode files and rebuild the Strip-prefix UI without page reload. */
+    async function recheckPrefixFiles() {
+        if (!_spData?.series) return;
+        // Remove old fix UI so it refreshes cleanly
+        document.getElementById("rg-fix-fab")?.remove();
+        document.getElementById("rg-fix-panel")?.remove();
+        try {
+            const files = await apiReq("GET", `/api/v3/episodefile?seriesId=${_spData.series.id}`);
+            _spData.files = files;
+
+            const affected = files
+                .filter(f => RG_PREFIX_RE.test(f.releaseGroup || ""))
+                .map(f => ({
+                    ...f,
+                    ep: _spData.epMap.get(f.id) ?? null,
+                    newReleaseGroup: (f.releaseGroup || "").replace(RG_PREFIX_RE, ""),
+                }))
+                .sort((a, b) => {
+                    const ds = (a.ep?.seasonNumber ?? 0) - (b.ep?.seasonNumber ?? 0);
+                    return ds !== 0 ? ds : (a.ep?.episodeNumber ?? 0) - (b.ep?.episodeNumber ?? 0);
+                });
+
+            if (affected.length > 0) {
+                buildFixUI(_spData.series, affected);
+            } else {
+                showToast("✓ No [prefix]- files found");
+            }
+        } catch (e) {
+            showToast("✗ " + e.message.slice(0, 60));
+            console.warn("[RG Strip recheck]", e.message);
+        }
+    }
 
     // ══════════════════════════════════════════════════════════════════════════
     //  SERIES PAGE — Auto-detect [network]- prefix in Release Group
@@ -1610,6 +1688,7 @@
         document.getElementById("rg-rename-notif")?.remove();
         _spData = null;
         document.getElementById("rg-check-btn")?.classList.remove("visible");
+        document.getElementById("rg-strip-btn")?.classList.remove("visible");
 
         const m = location.pathname.match(/^\/series\/([^/]+)/);
         if (!m) return;
@@ -1631,6 +1710,7 @@
             // Cache data for per-episode edit buttons
             _spData = { series, files, epMap };
             document.getElementById("rg-check-btn")?.classList.add("visible");
+            document.getElementById("rg-strip-btn")?.classList.add("visible");
             injectEpEditBtns();
 
             const affected = files
