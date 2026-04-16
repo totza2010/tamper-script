@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      8.7
+// @version      8.8
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -1562,7 +1562,7 @@
             _spData.files = files;
 
             const affected = files
-                .filter(f => RG_PREFIX_RE.test(f.releaseGroup || ""))
+                .filter(f => prefixAlreadyInFilename(f))
                 .map(f => ({
                     ...f,
                     ep: _spData.epMap.get(f.id) ?? null,
@@ -1679,6 +1679,25 @@
 
     const RG_PREFIX_RE = /^\[[^\]]+\]-/;
 
+    /**
+     * Strip condition gate — returns true only when:
+     *   1. releaseGroup starts with [prefix]-
+     *   2. The ACTUAL filename on disk (relativePath basename) already contains that prefix.
+     *
+     * Condition 2 ensures we don't show the strip panel for files where the prefix
+     * was just set in the DB but Sonarr hasn't renamed the file yet.
+     * e.g. RG="[TrueID]-AudioTH" but file is still "…-AudioTH.mkv" → returns false.
+     *      RG="[TrueID]-AudioTH" and file is "…[TrueID]-AudioTH.mkv" → returns true.
+     */
+    function prefixAlreadyInFilename(f) {
+        const rg = f.releaseGroup || "";
+        if (!RG_PREFIX_RE.test(rg)) return false;
+        const prefix = rg.match(RG_PREFIX_RE)?.[0] ?? ""; // e.g. "[TrueID]-"
+        if (!prefix) return false;
+        const basename = (f.relativePath || "").split(/[/\\]/).pop();
+        return basename.includes(prefix);
+    }
+
     function fmtEp(ep) {
         if (!ep) return "?";
         const s = String(ep.seasonNumber).padStart(2, "0");
@@ -1718,7 +1737,7 @@
             injectEpEditBtns();
 
             const affected = files
-                .filter(f => RG_PREFIX_RE.test(f.releaseGroup || ""))
+                .filter(f => prefixAlreadyInFilename(f))
                 .map(f => ({
                     ...f,
                     ep: epMap.get(f.id) ?? null,
