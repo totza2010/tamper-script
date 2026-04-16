@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      9.1
+// @version      9.2
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -28,8 +28,8 @@
 
     // Series page data cache (populated by checkSeriesPage, used by injectEpEditBtns)
     let _spData = null;
-    // Timestamp of the last episodefile re-fetch (throttle guard for refetchFilesAndReInject)
-    let _lastRefetch = 0;
+    // Guard: true while a refetchFilesAndReInject fetch is in-flight
+    let _refetching = false;
 
     // ══════════════════════════════════════════════════════════════════════════
     //  DATA
@@ -1151,25 +1151,26 @@
      */
 
     /**
-     * Re-fetch _spData.files from the API immediately, then re-run injectEpEditBtns.
+     * Re-fetch _spData.files from the API, then re-run injectEpEditBtns.
      *
-     * Called when injectEpEditBtns detects that the DOM shows paths that don't exist
-     * in the cached file list — meaning Sonarr renamed files after the last cache load.
+     * Called when injectEpEditBtns finds a cell whose DOM path doesn't exist in the
+     * cached file list (Sonarr renamed files asynchronously after strip/RG-edit).
      *
-     * Throttled to once per 2 s so a burst of MutationObserver callbacks (React
-     * re-renders many rows at once) only triggers one network request.
+     * Uses a boolean flag instead of a timer so:
+     *  - Only one fetch runs at a time (concurrent MutationObserver bursts are ignored)
+     *  - No fixed delay — re-injection fires as soon as the API responds
      */
     async function refetchFilesAndReInject() {
-        if (!_spData?.series) return;
-        const now = Date.now();
-        if (now - _lastRefetch < 2000) return; // throttle
-        _lastRefetch = now;
+        if (!_spData?.series || _refetching) return;
+        _refetching = true;
         try {
-            _spData.files = await apiReq(
+            const fresh = await apiReq(
                 "GET", `/api/v3/episodefile?seriesId=${_spData.series.id}`
             );
+            if (_spData) _spData.files = fresh; // guard: user may have navigated away
             injectEpEditBtns();
         } catch (_) { /* non-critical */ }
+        finally { _refetching = false; }
     }
 
     function injectEpEditBtns() {
@@ -1193,7 +1194,8 @@
         // Use td selector to skip the <th> header cell (which also contains "releaseGroup" text)
         document.querySelectorAll("td[class*='releaseGroup']").forEach(cell => {
             if (cell.dataset.epEditAdded) return;
-            cell.dataset.epEditAdded = "true";
+            // NOTE: epEditAdded is set only AFTER a button is successfully injected.
+            // Setting it early would permanently block retries when file matching fails.
 
             const tr = cell.closest("tr");
             if (!tr) return;
@@ -1264,6 +1266,9 @@
                 openEpRGEditor(btn, latest, latestEp);
             });
             cell.appendChild(btn);
+            // Mark as processed ONLY after successful injection so failed-match cells
+            // remain retryable (refetchFilesAndReInject will re-run injectEpEditBtns).
+            cell.dataset.epEditAdded = "true";
         });
     }
 
