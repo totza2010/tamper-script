@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      8.8
+// @version      8.9
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -1122,10 +1122,8 @@
 
                 // 5b. Unified rename mismatch check (same as series-page load)
                 if (_spData?.series) checkRenameMismatch(_spData.series, [file.id]);
-
-                // 5c. If the new RG value itself carries a [prefix]- pattern,
-                //     trigger the Strip panel so the user can remove it immediately.
-                if (RG_PREFIX_RE.test(value)) recheckPrefixFiles();
+                // Strip-prefix check is intentionally NOT triggered here —
+                // it only runs on page load or when the user presses the ✂ button.
 
             } catch (err) {
                 const msg = err.message.startsWith("Not saved") ? `✗ ${err.message}` : "✗ Save failed";
