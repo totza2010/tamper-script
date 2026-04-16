@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      9.5
+// @version      9.6
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -485,12 +485,15 @@
         //   B) Space-separated   : [TrueID NANA Extended]-AudioTH…     ← Sonarr {[Custom Formats]}
         //   C) No prefix         : AudioTHZHSubTHENZH
 
-        // Collect every [...] group that appears BEFORE the first "]-" or at start
-        // Works for both formats: each bracket yields one entry;
-        // space-separated entries inside a single bracket are split further below.
-        const brackets = [...raw.matchAll(/\[([^\]]+)\]/g)].map(m => m[1]);
-        const dashIdx  = raw.indexOf("]-");
-        const body     = dashIdx !== -1 ? raw.slice(dashIdx + 2) : raw;
+        // Find the end of the prefix block = last "]-" that is followed immediately
+        // by an uppercase letter (start of Audio/Sub body) or end of string.
+        // Using RG_PREFIX_RE to extract the full matched prefix, then slice the body.
+        const prefixMatch = raw.match(RG_PREFIX_RE);
+        const body = prefixMatch ? raw.slice(prefixMatch[0].length) : raw;
+
+        // Collect bracket content only from the prefix region (not from body)
+        const prefixStr = prefixMatch ? prefixMatch[0] : "";
+        const brackets  = [...prefixStr.matchAll(/\[([^\]]+)\]/g)].map(m => m[1]);
 
         const audioM = body.match(/Audio([A-Z]{2}(?:[A-Z]{2})*)/);
         const subM   = body.match(/Sub([A-Z]{2}(?:[A-Z]{2})*)/);
@@ -1810,7 +1813,9 @@
 .rfp-btn:disabled   { opacity:.4; cursor:default; }
 </style>`);
 
-    const RG_PREFIX_RE = /^\[[^\]]+\]-/;
+    // Matches one OR MORE consecutive [bracket] groups followed by "-"
+    // e.g. "[TrueID]-"  "[TrueID][IQ]-"  "[TrueID][IQ][Extended]-"
+    const RG_PREFIX_RE = /^(?:\[[^\]]+\])+-/;
 
     /**
      * Strip condition gate — returns true only when:
@@ -1825,9 +1830,13 @@
     function prefixAlreadyInFilename(f) {
         const rg = f.releaseGroup || "";
         if (!RG_PREFIX_RE.test(rg)) return false;
-        const prefix = rg.match(RG_PREFIX_RE)?.[0] ?? ""; // e.g. "[TrueID]-"
+        // Full prefix e.g. "[TrueID][IQ]-" — RG_PREFIX_RE now covers multi-bracket
+        const prefix = rg.match(RG_PREFIX_RE)?.[0] ?? "";
         if (!prefix) return false;
         const basename = (f.relativePath || "").split(/[/\\]/).pop();
+        // Filename may have the prefix embedded after quality brackets, e.g.
+        // "S01E39 - [WEBDL-2160p]-[TrueID][IQ]-AudioTH…"
+        // so we search for the prefix anywhere in the basename (not just at start)
         return basename.includes(prefix);
     }
 
