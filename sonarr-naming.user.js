@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      9.3
+// @version      9.4
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -36,19 +36,33 @@
     // ══════════════════════════════════════════════════════════════════════════
 
     const NETWORKS = [
-        { label: "Netflix", value: "Netflix" },
-        { label: "HBO", value: "HBO" },
-        { label: "iQIYI", value: "iQIYI" },
-        { label: "TrueID", value: "TrueID" },
-        { label: "Viu", value: "Viu" },
-        { label: "WeTV", value: "WeTV" },
-        { label: "NANA", value: "NANA" },
-        { label: "Disney+", value: "Disney" },
-        { label: "Amazon", value: "Amazon" },
-        { label: "Apple TV+", value: "AppleTV" },
-        { label: "Crunchyroll", value: "Crunchyroll" },
-        { label: "Bilibili", value: "Bilibili" },
-        { label: "Paramount+", value: "Paramount" },
+        // ── Thai / Southeast Asia ────────────────────────────────────────────
+        { label: "TrueID",     value: "TrueID"   },
+        { label: "Viu",        value: "VIU"      },
+        { label: "WeTV",       value: "WeTV"     },
+        { label: "iQIYI",      value: "IQ"       },
+        { label: "MONO MAX",   value: "MONOMAX"  },
+        { label: "NANA",       value: "NANA"     },
+        { label: "LINE TV",    value: "LINETV"   },
+        { label: "AIS Play",   value: "AIS"      },
+        // ── China / Japan / Korea ────────────────────────────────────────────
+        { label: "YouKu",      value: "YOUKU"    },
+        { label: "Bilibili",   value: "BL"       },
+        { label: "MGTV",       value: "MGTV"     },
+        { label: "Crunchyroll",value: "CR"       },
+        { label: "HIDIVE",     value: "HIDIVE"   },
+        { label: "Viki",       value: "VIKI"     },
+        // ── Global ───────────────────────────────────────────────────────────
+        { label: "Netflix",    value: "NF"       },
+        { label: "Disney+",    value: "DSNP"     },
+        { label: "Max",        value: "MAX"      },
+        { label: "HBO",        value: "HBO"      },
+        { label: "Amazon",     value: "AMZN"     },
+        { label: "Apple TV+",  value: "ATVP"     },
+        { label: "Hulu",       value: "HULU"     },
+        { label: "Peacock",    value: "PCOK"     },
+        { label: "Paramount+", value: "PMTP"     },
+        { label: "Showtime",   value: "SHO"      },
     ];
 
     const EDITIONS = [
@@ -60,49 +74,85 @@
         { label: "Theatrical", value: "Theatrical" },
         { label: "Remastered", value: "Remastered" },
         { label: "Collector's", value: "Collectors" },
+        { label: "Translate", value: "Translate" },
     ];
 
     const LANGS = [
-        { label: "Thai", value: "TH" },
-        { label: "English", value: "EN" },
-        { label: "Chinese", value: "ZH" },
-        { label: "Japanese", value: "JA" },
-        { label: "Korean", value: "KO" },
-        { label: "Spanish", value: "ES" },
-        { label: "Arabic", value: "AR" },
-        { label: "Bulgarian", value: "BG" },
-        { label: "Catalan", value: "CA" },
-        { label: "Czech", value: "CS" },
-        { label: "Danish", value: "DA" },
-        { label: "German", value: "DE" },
-        { label: "Greek", value: "EL" },
-        { label: "Estonian", value: "ET" },
-        { label: "Finnish", value: "FI" },
-        { label: "French", value: "FR" },
-        { label: "Hebrew", value: "HE" },
-        { label: "Hindi", value: "HI" },
-        { label: "Croatian", value: "HR" },
-        { label: "Hungarian", value: "HU" },
+        // ── Priority (most common in Asian streaming) — appear at top of picker ──
+        { label: "Thai",       value: "TH" },
+        { label: "English",    value: "EN" },
+        { label: "Chinese",    value: "ZH" },
+        { label: "Japanese",   value: "JA" },
+        { label: "Korean",     value: "KO" },
+        { label: "Malay",      value: "MS" },
         { label: "Indonesian", value: "ID" },
-        { label: "Italian", value: "IT" },
-        { label: "Lithuanian", value: "LT" },
-        { label: "Latvian", value: "LV" },
-        { label: "Dutch", value: "NL" },
-        { label: "Norwegian", value: "NO" },
-        { label: "Polish", value: "PL" },
-        { label: "Portuguese", value: "PT" },
-        { label: "Romanian", value: "RO" },
-        { label: "Russian", value: "RU" },
-        { label: "Slovak", value: "SK" },
-        { label: "Slovenian", value: "SL" },
-        { label: "Serbian", value: "SR" },
-        { label: "Swedish", value: "SV" },
-        { label: "Turkish", value: "TR" },
-        { label: "Ukrainian", value: "UK" },
         { label: "Vietnamese", value: "VI" },
+        { label: "Tagalog",    value: "TL" },
+        { label: "Burmese",    value: "MY" },
+        { label: "Khmer",      value: "KM" },
+        { label: "Lao",        value: "LO" },
+        { label: "Hindi",      value: "HI" },
+        { label: "Arabic",     value: "AR" },
+        // ── European & others (alphabetical) ────────────────────────────────
+        { label: "Bulgarian",  value: "BG" },
+        { label: "Catalan",    value: "CA" },
+        { label: "Croatian",   value: "HR" },
+        { label: "Czech",      value: "CS" },
+        { label: "Danish",     value: "DA" },
+        { label: "Dutch",      value: "NL" },
+        { label: "Estonian",   value: "ET" },
+        { label: "Finnish",    value: "FI" },
+        { label: "French",     value: "FR" },
+        { label: "German",     value: "DE" },
+        { label: "Greek",      value: "EL" },
+        { label: "Hebrew",     value: "HE" },
+        { label: "Hungarian",  value: "HU" },
+        { label: "Italian",    value: "IT" },
+        { label: "Latvian",    value: "LV" },
+        { label: "Lithuanian", value: "LT" },
+        { label: "Norwegian",  value: "NO" },
+        { label: "Polish",     value: "PL" },
+        { label: "Portuguese", value: "PT" },
+        { label: "Romanian",   value: "RO" },
+        { label: "Russian",    value: "RU" },
+        { label: "Serbian",    value: "SR" },
+        { label: "Slovak",     value: "SK" },
+        { label: "Slovenian",  value: "SL" },
+        { label: "Spanish",    value: "ES" },
+        { label: "Swedish",    value: "SV" },
+        { label: "Turkish",    value: "TR" },
+        { label: "Ukrainian",  value: "UK" },
     ];
 
     const MAX_LANG = 4;
+
+    // Languages pinned at the top regardless of usage stats
+    const LANG_PINNED = ["TH", "EN"];
+
+    // ── Language usage stats ──────────────────────────────────────────────────
+    const LANG_STATS_KEY = `rg_langstats_${location.hostname}`;
+
+    function loadLangStats() {
+        try { return JSON.parse(GM_getValue(LANG_STATS_KEY, "{}")); } catch { return {}; }
+    }
+    function incLangStat(code) {
+        const s = loadLangStats();
+        s[code] = (s[code] || 0) + 1;
+        GM_setValue(LANG_STATS_KEY, JSON.stringify(s));
+    }
+    /**
+     * Returns LANGS sorted by usage count (desc).
+     * LANG_PINNED codes (TH, EN) are always first in declaration order.
+     * Ties are broken by original LANGS array order.
+     */
+    function sortedLangs() {
+        const s = loadLangStats();
+        const pinned = LANG_PINNED.map(c => LANGS.find(l => l.value === c)).filter(Boolean);
+        const rest   = LANGS
+            .filter(l => !LANG_PINNED.includes(l.value))
+            .sort((a, b) => (s[b.value] || 0) - (s[a.value] || 0));
+        return [...pinned, ...rest];
+    }
 
     // ══════════════════════════════════════════════════════════════════════════
     //  STYLES
@@ -347,7 +397,7 @@
 
         const grid = document.createElement("div");
         grid.className = "rg-lang-grid";
-        LANGS.forEach(lang => {
+        sortedLangs().forEach(lang => {
             const opt = document.createElement("div");
             opt.className = "rg-lang-option";
             opt.textContent = `${lang.label} (${lang.value})`;
@@ -358,6 +408,7 @@
                 if (selected.length >= MAX_LANG) return;
                 if (selected.includes(lang.value)) return;
                 selected.push(lang.value);
+                incLangStat(lang.value); // track usage — drives sort order next open
                 opt.classList.add("chosen");
                 renderChips();
                 onChange();
@@ -1481,6 +1532,7 @@
             }
 
             if (name === "api") {
+                // API Key section
                 const sec = document.createElement("div"); sec.className = "rgs-section";
                 const key = GM_getValue(APIKEY_KEY, "");
                 sec.innerHTML = `<div class="rgs-section-label">API Key — ${location.hostname}</div>
@@ -1492,6 +1544,36 @@
                     sec.querySelector(".rgs-key-box").textContent = "(cleared — will prompt on next use)";
                 });
                 body.appendChild(sec);
+
+                // Language usage stats section
+                const statSec = document.createElement("div"); statSec.className = "rgs-section";
+                function renderLangStats() {
+                    const s = loadLangStats();
+                    const sorted = Object.entries(s)
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 12); // show top 12
+                    const rows = sorted.length
+                        ? sorted.map(([code, count]) => {
+                            const label = LANGS.find(l => l.value === code)?.label ?? code;
+                            const pinned = LANG_PINNED.includes(code) ? " 📌" : "";
+                            return `<span class="rgs-pill active" style="cursor:default">
+                                        ${label} (${code})${pinned}
+                                        <span style="color:#89b;font-size:10px;margin-left:3px">×${count}</span>
+                                    </span>`;
+                        }).join("")
+                        : `<span style="color:#456;font-size:11px">No usage data yet.</span>`;
+                    statSec.innerHTML = `
+                        <div class="rgs-section-label">Language Usage Stats</div>
+                        <div class="rgs-desc">Languages are sorted by usage in the picker. TH &amp; EN always appear first.</div>
+                        <div class="rgs-pills-wrap" style="margin-bottom:8px">${rows}</div>
+                        <button class="rgs-small-btn" id="rgs-reset-stats">Reset Stats</button>`;
+                    statSec.querySelector("#rgs-reset-stats")?.addEventListener("click", () => {
+                        GM_setValue(LANG_STATS_KEY, "{}");
+                        renderLangStats();
+                    });
+                }
+                renderLangStats();
+                body.appendChild(statSec);
             }
         }
 
