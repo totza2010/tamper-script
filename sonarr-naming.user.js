@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      8.9
+// @version      9.0
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -28,6 +28,8 @@
 
     // Series page data cache (populated by checkSeriesPage, used by injectEpEditBtns)
     let _spData = null;
+    // Timer for debounced file re-fetch (used when injectEpEditBtns can't match paths)
+    let _refetchTimer = null;
 
     // ══════════════════════════════════════════════════════════════════════════
     //  DATA
@@ -1147,6 +1149,27 @@
      *  - Read tr.cells[pathColIdx] to get the path text for THIS row
      *  - Fallback: scan all <td> siblings for a cell that looks like a file path
      */
+
+    /**
+     * Schedule a single debounced re-fetch of _spData.files.
+     * Called when injectEpEditBtns finds cells whose paths don't match any cached file
+     * (e.g. after Sonarr renames files asynchronously post-strip).
+     * Only one timer runs at a time; re-injection fires automatically after the fetch.
+     */
+    function scheduleFileRefetch(delayMs = 3000) {
+        if (_refetchTimer || !_spData?.series) return;
+        _refetchTimer = setTimeout(async () => {
+            _refetchTimer = null;
+            if (!_spData?.series) return;
+            try {
+                _spData.files = await apiReq(
+                    "GET", `/api/v3/episodefile?seriesId=${_spData.series.id}`
+                );
+                injectEpEditBtns();
+            } catch (_) { /* non-critical */ }
+        }, delayMs);
+    }
+
     function injectEpEditBtns() {
         if (!_spData) return;
         if (!/^\/series\/[^/]+/.test(location.pathname)) return;
@@ -1191,6 +1214,7 @@
             }
 
             let file = null;
+            let hadPath = false; // true if we got a path string but couldn't match a file
             if (pathTxt) {
                 // Exact relativePath match
                 file = _spData.files.find(f => f.relativePath === pathTxt);
@@ -1201,6 +1225,7 @@
                         f.relativePath?.split(/[/\\]/).pop() === fname
                     );
                 }
+                if (!file) hadPath = true; // path exists but no match → data is likely stale
             }
 
             // Last resort: unique release-group text (only safe if exactly 1 file has that RG)
@@ -1212,7 +1237,13 @@
                 }
             }
 
-            if (!file) return;
+            if (!file) {
+                // If we had a path but still couldn't match, _spData.files is likely stale
+                // (e.g. Sonarr renamed files asynchronously after strip).
+                // Schedule a debounced re-fetch so buttons appear once paths are refreshed.
+                if (hadPath) scheduleFileRefetch();
+                return;
+            }
 
             const ep = _spData.epMap.get(file.id);
 
@@ -1960,20 +1991,14 @@
             });
 
             rfpStatus(`✓ Done — ${selectedFiles.length} file(s) renamed.`, "ok");
-            setTimeout(async () => {
+            // Close the UI after a short pause, then proactively schedule a file re-fetch.
+            // Sonarr renames files asynchronously; when React re-renders with new paths,
+            // injectEpEditBtns will also auto-schedule a re-fetch if it can't match paths.
+            setTimeout(() => {
                 document.getElementById("rg-fix-fab")?.remove();
                 document.getElementById("rg-fix-panel")?.remove();
-                // Re-fetch files: after rename, relativePaths change so old _spData.files
-                // would cause path-matching in injectEpEditBtns to fail (→ buttons disappear).
-                if (_spData?.series) {
-                    try {
-                        _spData.files = await apiReq(
-                            "GET", `/api/v3/episodefile?seriesId=${_spData.series.id}`
-                        );
-                        injectEpEditBtns();
-                    } catch (_) { /* non-critical */ }
-                }
-            }, 3500);
+                scheduleFileRefetch(2000); // first attempt after 2 s
+            }, 2500);
 
         } catch (e) {
             rfpStatus(`✗ ${e.message}`, "err");
