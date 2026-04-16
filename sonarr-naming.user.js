@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      9.0
+// @version      9.1
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -28,8 +28,8 @@
 
     // Series page data cache (populated by checkSeriesPage, used by injectEpEditBtns)
     let _spData = null;
-    // Timer for debounced file re-fetch (used when injectEpEditBtns can't match paths)
-    let _refetchTimer = null;
+    // Timestamp of the last episodefile re-fetch (throttle guard for refetchFilesAndReInject)
+    let _lastRefetch = 0;
 
     // ══════════════════════════════════════════════════════════════════════════
     //  DATA
@@ -1151,23 +1151,25 @@
      */
 
     /**
-     * Schedule a single debounced re-fetch of _spData.files.
-     * Called when injectEpEditBtns finds cells whose paths don't match any cached file
-     * (e.g. after Sonarr renames files asynchronously post-strip).
-     * Only one timer runs at a time; re-injection fires automatically after the fetch.
+     * Re-fetch _spData.files from the API immediately, then re-run injectEpEditBtns.
+     *
+     * Called when injectEpEditBtns detects that the DOM shows paths that don't exist
+     * in the cached file list — meaning Sonarr renamed files after the last cache load.
+     *
+     * Throttled to once per 2 s so a burst of MutationObserver callbacks (React
+     * re-renders many rows at once) only triggers one network request.
      */
-    function scheduleFileRefetch(delayMs = 3000) {
-        if (_refetchTimer || !_spData?.series) return;
-        _refetchTimer = setTimeout(async () => {
-            _refetchTimer = null;
-            if (!_spData?.series) return;
-            try {
-                _spData.files = await apiReq(
-                    "GET", `/api/v3/episodefile?seriesId=${_spData.series.id}`
-                );
-                injectEpEditBtns();
-            } catch (_) { /* non-critical */ }
-        }, delayMs);
+    async function refetchFilesAndReInject() {
+        if (!_spData?.series) return;
+        const now = Date.now();
+        if (now - _lastRefetch < 2000) return; // throttle
+        _lastRefetch = now;
+        try {
+            _spData.files = await apiReq(
+                "GET", `/api/v3/episodefile?seriesId=${_spData.series.id}`
+            );
+            injectEpEditBtns();
+        } catch (_) { /* non-critical */ }
     }
 
     function injectEpEditBtns() {
@@ -1238,10 +1240,10 @@
             }
 
             if (!file) {
-                // If we had a path but still couldn't match, _spData.files is likely stale
-                // (e.g. Sonarr renamed files asynchronously after strip).
-                // Schedule a debounced re-fetch so buttons appear once paths are refreshed.
-                if (hadPath) scheduleFileRefetch();
+                // If we had a path but still couldn't match, _spData.files is stale
+                // (Sonarr renamed files asynchronously — new DOM paths not in cache yet).
+                // Fetch fresh data immediately; throttle prevents concurrent requests.
+                if (hadPath) refetchFilesAndReInject();
                 return;
             }
 
@@ -1991,13 +1993,10 @@
             });
 
             rfpStatus(`✓ Done — ${selectedFiles.length} file(s) renamed.`, "ok");
-            // Close the UI after a short pause, then proactively schedule a file re-fetch.
-            // Sonarr renames files asynchronously; when React re-renders with new paths,
-            // injectEpEditBtns will also auto-schedule a re-fetch if it can't match paths.
+            // Close UI; injectEpEditBtns will auto-refetch when React re-renders new paths.
             setTimeout(() => {
                 document.getElementById("rg-fix-fab")?.remove();
                 document.getElementById("rg-fix-panel")?.remove();
-                scheduleFileRefetch(2000); // first attempt after 2 s
             }, 2500);
 
         } catch (e) {
