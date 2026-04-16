@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      9.2
+// @version      9.3
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -1193,9 +1193,14 @@
 
         // Use td selector to skip the <th> header cell (which also contains "releaseGroup" text)
         document.querySelectorAll("td[class*='releaseGroup']").forEach(cell => {
-            if (cell.dataset.epEditAdded) return;
-            // NOTE: epEditAdded is set only AFTER a button is successfully injected.
-            // Setting it early would permanently block retries when file matching fails.
+            if (cell.dataset.epEditAdded) {
+                // Flag is set — but React may have re-rendered this cell's content,
+                // removing our button while keeping the <td> element (and its dataset).
+                // Check that the button still actually exists; if not, clear the flag
+                // so we fall through and re-inject it.
+                if (cell.querySelector(".ep-rg-edit-btn")) return; // still intact, skip
+                delete cell.dataset.epEditAdded; // React wiped our button — re-inject
+            }
 
             const tr = cell.closest("tr");
             if (!tr) return;
