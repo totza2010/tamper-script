@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      8.6
+// @version      8.7
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -1123,6 +1123,10 @@
                 // 5b. Unified rename mismatch check (same as series-page load)
                 if (_spData?.series) checkRenameMismatch(_spData.series, [file.id]);
 
+                // 5c. If the new RG value itself carries a [prefix]- pattern,
+                //     trigger the Strip panel so the user can remove it immediately.
+                if (RG_PREFIX_RE.test(value)) recheckPrefixFiles();
+
             } catch (err) {
                 const msg = err.message.startsWith("Not saved") ? `✗ ${err.message}` : "✗ Save failed";
                 saveBtn.textContent = msg.slice(0, 34);
@@ -1939,10 +1943,20 @@
             });
 
             rfpStatus(`✓ Done — ${selectedFiles.length} file(s) renamed.`, "ok");
-            setTimeout(() => {
+            setTimeout(async () => {
                 document.getElementById("rg-fix-fab")?.remove();
                 document.getElementById("rg-fix-panel")?.remove();
-            }, 3000);
+                // Re-fetch files: after rename, relativePaths change so old _spData.files
+                // would cause path-matching in injectEpEditBtns to fail (→ buttons disappear).
+                if (_spData?.series) {
+                    try {
+                        _spData.files = await apiReq(
+                            "GET", `/api/v3/episodefile?seriesId=${_spData.series.id}`
+                        );
+                        injectEpEditBtns();
+                    } catch (_) { /* non-critical */ }
+                }
+            }, 3500);
 
         } catch (e) {
             rfpStatus(`✗ ${e.message}`, "err");
