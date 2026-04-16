@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      9.4
+// @version      9.5
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -334,10 +334,10 @@
     }
 
     // ══════════════════════════════════════════════════════════════════════════
-    //  SINGLE-SELECT PILLS  (Network / Edition)
+    //  MULTI-SELECT PILLS  (Network / Edition — toggle any number)
     // ══════════════════════════════════════════════════════════════════════════
 
-    function makeSinglePills(items, extraClass, activeValue, onChange) {
+    function makeMultiPills(items, extraClass, activeValues, onChange) {
         const wrap = document.createElement("div");
         wrap.className = "rg-pills";
 
@@ -346,17 +346,17 @@
             p.className = `rg-pill ${extraClass}`;
             p.textContent = item.label;
             p.dataset.value = item.value;
-            if (item.value === activeValue) p.classList.add("active");
+            if (activeValues.includes(item.value)) p.classList.add("active");
             p.addEventListener("click", () => {
-                const was = p.classList.contains("active");
-                wrap.querySelectorAll(".rg-pill").forEach(x => x.classList.remove("active"));
-                if (!was) p.classList.add("active");
+                p.classList.toggle("active");
                 onChange();
             });
             wrap.appendChild(p);
         });
 
-        const get = () => wrap.querySelector(".rg-pill.active")?.dataset.value ?? null;
+        // Returns ordered array of selected values (in pill order)
+        const get = () =>
+            [...wrap.querySelectorAll(".rg-pill.active")].map(p => p.dataset.value);
         return { el: wrap, get };
     }
 
@@ -480,29 +480,36 @@
     // ══════════════════════════════════════════════════════════════════════════
 
     function parseRG(raw) {
-        // e.g. "[TrueID]-AudioTHZHSubTHENZH"  or  "[TrueID][Extended]-AudioTH..."
-        const netMatch = raw.match(/^\[([^\]]+)\]/);
-        const edtMatch = raw.match(/\]\[([^\]]+)\]-/) || raw.match(/^\[([^\]]+)\]-/);
-        // More robust parse:
+        // Supported prefix formats (both produced by Sonarr or by this script):
+        //   A) Multiple brackets : [TrueID][NANA][Extended]-AudioTH…   ← our output
+        //   B) Space-separated   : [TrueID NANA Extended]-AudioTH…     ← Sonarr {[Custom Formats]}
+        //   C) No prefix         : AudioTHZHSubTHENZH
+
+        // Collect every [...] group that appears BEFORE the first "]-" or at start
+        // Works for both formats: each bracket yields one entry;
+        // space-separated entries inside a single bracket are split further below.
         const brackets = [...raw.matchAll(/\[([^\]]+)\]/g)].map(m => m[1]);
-        const dashIdx = raw.indexOf("]-");
-        const body = dashIdx !== -1 ? raw.slice(dashIdx + 2) : raw;
+        const dashIdx  = raw.indexOf("]-");
+        const body     = dashIdx !== -1 ? raw.slice(dashIdx + 2) : raw;
 
         const audioM = body.match(/Audio([A-Z]{2}(?:[A-Z]{2})*)/);
-        const subM = body.match(/Sub([A-Z]{2}(?:[A-Z]{2})*)/);
+        const subM   = body.match(/Sub([A-Z]{2}(?:[A-Z]{2})*)/);
 
-        // Identify which bracket is network vs edition
-        let network = null, edition = null;
-        brackets.forEach(b => {
-            if (NETWORKS.find(n => n.value === b || n.label === b)) network = b;
-            else if (EDITIONS.find(e => e.value === b || e.label === b)) edition = b;
+        // Expand each bracket entry: split on spaces to handle format B
+        // e.g. "TrueID NANA Extended" → ["TrueID","NANA","Extended"]
+        const tokens = brackets.flatMap(b => b.split(/\s+/).filter(Boolean));
+
+        const networks = [], editions = [];
+        tokens.forEach(t => {
+            if (NETWORKS.find(n => n.value === t || n.label === t))      networks.push(t);
+            else if (EDITIONS.find(e => e.value === t || e.label === t)) editions.push(t);
         });
 
         return {
-            network,
-            edition,
+            networks,   // e.g. ["TrueID","NANA"]
+            editions,   // e.g. ["Extended"]
             audioCodes: audioM ? (audioM[1].match(/.{2}/g) ?? []) : [],
-            subCodes: subM ? (subM[1].match(/.{2}/g) ?? []) : [],
+            subCodes:   subM   ? (subM[1].match(/.{2}/g)  ?? []) : [],
         };
     }
 
@@ -510,11 +517,12 @@
     //  BUILD OUTPUT STRING
     // ══════════════════════════════════════════════════════════════════════════
 
-    function buildValue(network, edition, audioCodes, subCodes) {
-        const prefix = [network, edition].filter(Boolean).map(v => `[${v}]`).join("");
-        const parts = [];
+    // networks & editions are now arrays; audioCodes & subCodes remain arrays of 2-char codes
+    function buildValue(networks, editions, audioCodes, subCodes) {
+        const prefix = [...networks, ...editions].map(v => `[${v}]`).join("");
+        const parts  = [];
         if (audioCodes.length) parts.push(`Audio${audioCodes.join("")}`);
-        if (subCodes.length) parts.push(`Sub${subCodes.join("")}`);
+        if (subCodes.length)   parts.push(`Sub${subCodes.join("")}`);
         const lang = parts.join("");
         if (!prefix && !lang) return "";
         if (!prefix) return lang;
@@ -547,12 +555,12 @@
         const container = document.createElement("div");
         container.id = "rg-container";
 
-        // Network
-        const netComp = makeSinglePills(NETWORKS, "net", parsed.network, sync);
+        // Network (multi-select)
+        const netComp = makeMultiPills(NETWORKS, "net", parsed.networks, sync);
         container.appendChild(makeRow("Network", netComp.el));
 
-        // Edition
-        const edtComp = makeSinglePills(EDITIONS, "edt", parsed.edition, sync);
+        // Edition (multi-select)
+        const edtComp = makeMultiPills(EDITIONS, "edt", parsed.editions, sync);
         container.appendChild(makeRow("Edition", edtComp.el));
 
         // Language (Audio + Sub)
@@ -572,14 +580,15 @@
 
         // Sync
         function sync() {
-            const net = netComp.get();
-            const edt = edtComp.get();
+            const nets  = netComp.get();   // string[]
+            const edts  = edtComp.get();   // string[]
             const audio = audioComp.get();
-            const sub = subComp.get();
-            const value = buildValue(net, edt, audio, sub);
+            const sub   = subComp.get();
+            const value = buildValue(nets, edts, audio, sub);
 
             preview.textContent = value || "—";
-            preview.className = !value ? "empty" : net || edt ? "has-network" : "";
+            preview.className   = !value ? "empty"
+                                : nets.length || edts.length ? "has-network" : "";
 
             setReactValue(releaseInput, value);
         }
@@ -1052,14 +1061,14 @@
             popup.appendChild(info);
         }
 
-        // Network
+        // Network (multi-select)
         const netRow = makeEpPopRow("Network");
-        const netComp = makeSinglePills(NETWORKS, "net", parsed.network, sync);
+        const netComp = makeMultiPills(NETWORKS, "net", parsed.networks, sync);
         netRow.appendChild(netComp.el);
 
-        // Edition
+        // Edition (multi-select)
         const edtRow = makeEpPopRow("Edition");
-        const edtComp = makeSinglePills(EDITIONS, "edt", parsed.edition, sync);
+        const edtComp = makeMultiPills(EDITIONS, "edt", parsed.editions, sync);
         edtRow.appendChild(edtComp.el);
 
         // Language (dual)
@@ -1096,10 +1105,11 @@
         }
 
         function sync() {
-            const val = buildValue(netComp.get(), edtComp.get(), audioComp.get(), subComp.get());
+            const nets = netComp.get(), edts = edtComp.get();
+            const val  = buildValue(nets, edts, audioComp.get(), subComp.get());
             preview.textContent = val || "—";
             preview.className   = "ep-pop-preview" +
-                (!val ? " empty" : netComp.get() || edtComp.get() ? " has-network" : "");
+                (!val ? " empty" : nets.length || edts.length ? " has-network" : "");
         }
         sync();
 
