@@ -1,12 +1,13 @@
 import { NETWORKS, EDITIONS, HDTV_FIX } from "./constants.js";
 import { getSpData } from "./state.js";
-import { apiReq, waitForCommand } from "./api.js";
+import { apiReq, waitForCommand, waitForFileUpdate } from "./api.js";
 import { fmtEp, firstEp, showToast } from "./utils.js";
 import { buildValue, needsRGSuggestion } from "./rg-parser.js";
 import { makeMultiPills, makeLangPicker } from "./pickers.js";
 import { mapLangNameToCode, suggestRGFromFile } from "./lang.js";
 import { checkRenameMismatch } from "./rename.js";
 import { recheckPrefixFiles } from "./prefix-fix.js";
+import { createProgress } from "./progress-ui.js";
 
 // ── RG Suggestion — detect missing Audio in Release Group, suggest from mediaInfo ──
 
@@ -396,18 +397,36 @@ export async function executeRGSuggestion(series, selected, opts, panel) {
     const cancelBtn = panel.querySelector("#rgsp-cancel");
     applyBtn.disabled = cancelBtn.disabled = true;
 
-    const rgspSt = (msg, type) => {
-        const el = panel.querySelector("#rgsp-status");
-        if (el) { el.textContent = msg; el.className = `rgsp-status ${type}`; }
-    };
+    // ── Build step list based on options ─────────────────────────────────────
+    const stepLabels = [
+        `Setting Release Group (${selected.length} file${selected.length > 1 ? "s" : ""})`,
+        "Verifying with API",
+    ];
+    if (opts.renameNow) {
+        stepLabels.push("Sending rename command");
+        stepLabels.push("Waiting for rename");
+    } else {
+        stepLabels.push("Preparing rename popup");
+    }
+    if (opts.hasPrefix && opts.renameNow) {
+        stepLabels.push("Checking strip files");
+    }
+
+    const STEP_RG     = 0;
+    const STEP_VERIFY = 1;
+    const STEP_CMD    = 2;
+    const STEP_WAIT   = opts.renameNow ? 3 : -1;
+    const STEP_STRIP  = (opts.hasPrefix && opts.renameNow) ? 4 : -1;
+
+    const prog = createProgress("💡 Applying Release Group", stepLabels);
 
     try {
-        // ── Step 1: PUT each file's Release Group ─────────────────────────
+        // ── Step 0: PUT each file's Release Group ─────────────────────────
+        let lastFileId, lastExpectedRG;
         for (let i = 0; i < selected.length; i++) {
             const f = selected[i];
-            rgspSt(`Updating ${i + 1} / ${selected.length}…`, "loading");
+            prog.update(STEP_RG, "active", `${i + 1} / ${selected.length}`);
 
-            // Determine the RG for this specific file from its individual fileValues
             const fv = opts.fileValues.get(f.id);
             const fileRG = fv
                 ? buildValue(fv.nets, fv.edts, fv.audioCodes, fv.subCodes)
@@ -432,50 +451,60 @@ export async function executeRGSuggestion(series, selected, opts, panel) {
                 const idx = _spData.files.findIndex(x => x.id === f.id);
                 if (idx !== -1) _spData.files[idx] = { ..._spData.files[idx], releaseGroup: fileRG };
             }
-        }
 
-        rgspSt(`All ${selected.length} updated. Waiting for Sonarr…`, "loading");
-        await new Promise(r => setTimeout(r, 600));
+            lastFileId = f.id;
+            lastExpectedRG = fileRG;
+        }
+        prog.update(STEP_RG, "done", `${selected.length} updated`);
+
+        // ── Step 1: Verify DB commit via API poll ─────────────────────────
+        prog.update(STEP_VERIFY, "active", "polling…");
+        if (lastFileId != null) {
+            await waitForFileUpdate(lastFileId, lastExpectedRG);
+        }
+        prog.update(STEP_VERIFY, "done");
 
         document.getElementById("rg-suggest-btn")?.classList.remove("has-suggestions");
 
         if (opts.renameNow) {
-            // ── Step 2a: Rename immediately ───────────────────────────────
-            rgspSt("Renaming files…", "loading");
+            // ── Step 2: Send rename command ───────────────────────────────
+            prog.update(STEP_CMD, "active");
             const cmd = await apiReq("POST", "/api/v3/command", {
                 name: "RenameFiles",
                 seriesId: series.id,
                 files: selected.map(f => f.id),
             });
-            // Poll until Sonarr actually finishes renaming (not just queued)
-            await waitForCommand(cmd.id, st => rgspSt(`Renaming… (${st})`, "loading"));
-            rgspSt(`✓ Done — ${selected.length} file(s) updated & renamed.`, "ok");
-            setTimeout(async () => {
-                panel.classList.remove("open");
-                // If Network/Edition prefix was applied, check for strip
+            prog.update(STEP_CMD, "done");
+
+            // ── Step 3: Wait for rename to complete ───────────────────────
+            prog.update(STEP_WAIT, "active", "queued");
+            await waitForCommand(cmd.id, st => prog.update(STEP_WAIT, "active", st));
+            prog.update(STEP_WAIT, "done");
+
+            // ── Step 4 (optional): Check for strip ───────────────────────
+            if (STEP_STRIP >= 0) {
+                prog.update(STEP_STRIP, "active");
                 const _spData = getSpData();
-                if (opts.hasPrefix && _spData?.series) {
-                    await recheckPrefixFiles();
-                }
-            }, 1500);
+                if (_spData?.series) await recheckPrefixFiles();
+                prog.update(STEP_STRIP, "done");
+            }
+
+            prog.finish(`✓ ${selected.length} file(s) updated & renamed.`, 1500);
+            panel.classList.remove("open");
+
         } else {
-            // ── Step 2b: Show rename confirmation popup ────────────────────
-            rgspSt(`✓ ${selected.length} RG(s) updated — confirm rename below.`, "ok");
-
-            // Post-rename callback: check strip if prefix was applied
-            const afterRename = opts.hasPrefix
-                ? () => recheckPrefixFiles()
-                : null;
-
-            setTimeout(() => {
-                panel.classList.remove("open");
-                const _spData = getSpData();
-                if (_spData?.series) checkRenameMismatch(_spData.series, null, afterRename);
-            }, 1500);
+            // ── Step 2: Show rename confirmation popup ────────────────────
+            prog.update(STEP_CMD, "active");
+            const afterRename = opts.hasPrefix ? () => recheckPrefixFiles() : null;
+            const _spData = getSpData();
+            if (_spData?.series) checkRenameMismatch(_spData.series, null, afterRename);
+            prog.update(STEP_CMD, "done");
+            prog.finish(`✓ ${selected.length} RG(s) set — confirm rename.`, 800);
+            panel.classList.remove("open");
         }
 
     } catch (e) {
-        rgspSt(`✗ ${e.message}`, "err");
+        prog.fail(`✗ ${e.message}`);
         applyBtn.disabled = cancelBtn.disabled = false;
     }
 }

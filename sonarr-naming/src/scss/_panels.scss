@@ -56,6 +56,7 @@
     background: #13132a;
     cursor: pointer;
     border-bottom: 1px solid #2a2a45;
+    -webkit-user-select: none;
     user-select: none;
 
     &:last-child { border-bottom: none; }

@@ -1,7 +1,8 @@
 import { RG_PREFIX_RE } from "./constants.js";
 import { getSpData } from "./state.js";
-import { apiReq, waitForCommand } from "./api.js";
+import { apiReq, waitForCommand, waitForFileUpdate } from "./api.js";
 import { fmtEp, firstEp, showToast } from "./utils.js";
+import { createProgress } from "./progress-ui.js";
 
 // ── Series page — Auto-detect [network]- prefix in Release Group ──────────────
 
@@ -236,60 +237,69 @@ export function buildFixUI(series, affected) {
 
     // If "strip immediately" is enabled, fire the strip command automatically
     if (stripNowDefault) {
-        setTimeout(() => {
-            executeGroupFix(series, affected.filter(f => checked.has(f.id)));
-        }, 800);
+        executeGroupFix(series, affected.filter(f => checked.has(f.id)));
     }
 }
 
 // ── Execute: all PUTs first, then rename ──────────────────────────────────
 
-function rfpStatus(msg, type) {
-    const el = document.getElementById("rfp-status");
-    if (!el) return;
-    el.textContent = msg;
-    el.className = `rfp-status ${type}`;
-}
-
 export async function executeGroupFix(series, selectedFiles) {
     if (!selectedFiles.length) return;
     const confirmBtn = document.getElementById("rfp-confirm");
-    const cancelBtn = document.getElementById("rfp-cancel");
-    confirmBtn.disabled = cancelBtn.disabled = true;
+    const cancelBtn  = document.getElementById("rfp-cancel");
+    if (confirmBtn) confirmBtn.disabled = true;
+    if (cancelBtn)  cancelBtn.disabled  = true;
+
+    const prog = createProgress("✂️ Strip Network Prefix", [
+        `Updating Release Group (${selectedFiles.length} file${selectedFiles.length > 1 ? "s" : ""})`,
+        "Verifying with API",
+        "Sending rename command",
+        "Waiting for rename",
+    ]);
 
     try {
-        // ── Step 1: Update every Release Group sequentially ──────────
+        // ── Step 0: PUT each file's stripped Release Group ────────────
+        let lastFileId, lastExpectedRG;
         for (let i = 0; i < selectedFiles.length; i++) {
             const f = selectedFiles[i];
-            rfpStatus(`Updating Release Group ${i + 1} / ${selectedFiles.length}…`, "loading");
+            prog.update(0, "active", `${i + 1} / ${selectedFiles.length}`);
             await apiReq("PUT", `/api/v3/episodefile/${f.id}`, {
                 ...f,
                 releaseGroup: f.newReleaseGroup,
             });
+            lastFileId    = f.id;
+            lastExpectedRG = f.newReleaseGroup;
         }
+        prog.update(0, "done", `${selectedFiles.length} updated`);
 
-        // ── Step 2: Wait for Sonarr to commit all DB writes ──────────
-        rfpStatus(`All ${selectedFiles.length} updated. Waiting for Sonarr…`, "loading");
-        await new Promise(r => setTimeout(r, 600));
+        // ── Step 1: Verify DB commit via API poll ─────────────────────
+        prog.update(1, "active", "polling…");
+        if (lastFileId != null) {
+            await waitForFileUpdate(lastFileId, lastExpectedRG);
+        }
+        prog.update(1, "done");
 
-        // ── Step 3: Trigger rename ────────────────────────────────────
-        rfpStatus("Renaming files…", "loading");
+        // ── Step 2: Send rename command ───────────────────────────────
+        prog.update(2, "active");
         const cmd = await apiReq("POST", "/api/v3/command", {
             name: "RenameFiles",
             seriesId: series.id,
             files: selectedFiles.map(f => f.id),
         });
-        // Poll until Sonarr actually finishes renaming
-        await waitForCommand(cmd.id, st => rfpStatus(`Renaming… (${st})`, "loading"));
+        prog.update(2, "done");
 
-        rfpStatus(`✓ Done — ${selectedFiles.length} file(s) renamed.`, "ok");
-        // Close UI; injectEpEditBtns will auto-refetch when React re-renders new paths.
-        setTimeout(() => {
-            document.getElementById("rg-fix-panel")?.remove();
-        }, 1500);
+        // ── Step 3: Wait for rename to complete ───────────────────────
+        prog.update(3, "active", "queued");
+        await waitForCommand(cmd.id, st => prog.update(3, "active", st));
+        prog.update(3, "done");
+
+        // Close strip panel; injectEpEditBtns re-fetches on next React render
+        document.getElementById("rg-fix-panel")?.remove();
+        prog.finish(`✓ ${selectedFiles.length} file(s) renamed.`, 1500);
 
     } catch (e) {
-        rfpStatus(`✗ ${e.message}`, "err");
-        confirmBtn.disabled = cancelBtn.disabled = false;
+        prog.fail(`✗ ${e.message}`);
+        if (confirmBtn) confirmBtn.disabled = false;
+        if (cancelBtn)  cancelBtn.disabled  = false;
     }
 }

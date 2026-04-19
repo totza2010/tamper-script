@@ -46,3 +46,25 @@ export async function waitForCommand(cmdId, onStatus, maxMs = 300_000) {
     }
     throw new Error("Rename command timed out");
 }
+
+/**
+ * Poll GET /api/v3/episodefile/{id} until its releaseGroup matches expectedRG.
+ * Used to confirm Sonarr has committed the DB write before issuing a rename.
+ *
+ * @param {number} fileId      - episode file ID
+ * @param {string} expectedRG  - the Release Group string we just PUT
+ * @param {number} [maxMs]     - give up after this many ms (default 10 s)
+ * @returns {Promise<void>}    - resolves when matched (or silently times out)
+ */
+export async function waitForFileUpdate(fileId, expectedRG, maxMs = 10_000) {
+    const INTERVAL = 800;
+    const deadline = Date.now() + maxMs;
+    while (Date.now() < deadline) {
+        try {
+            const f = await apiReq("GET", `/api/v3/episodefile/${fileId}`);
+            if (f.releaseGroup === expectedRG) return;
+        } catch (_) { /* ignore transient errors */ }
+        await new Promise(r => setTimeout(r, INTERVAL));
+    }
+    // Timed out — continue anyway; the rename will still work in most cases
+}

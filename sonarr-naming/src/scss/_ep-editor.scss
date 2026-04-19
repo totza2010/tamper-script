@@ -157,6 +157,7 @@
     color: #888;
     cursor: pointer;
     font-size: 12px;
+    -webkit-user-select: none;
     user-select: none;
     transition: background .14s, border-color .14s, color .14s;
     white-space: nowrap;
@@ -217,6 +218,7 @@
     color: #667;
     cursor: pointer;
     font-size: 12px;
+    -webkit-user-select: none;
     user-select: none;
     transition: all .14s;
 
@@ -265,6 +267,7 @@
     color: #889;
     cursor: pointer;
     font-size: 12px;
+    -webkit-user-select: none;
     user-select: none;
     transition: all .12s;
 
@@ -307,6 +310,7 @@
     justify-content: center;
     box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
     transition: all .18s;
+    -webkit-user-select: none;
     user-select: none;
 
     &.visible { display: flex; }
@@ -361,6 +365,7 @@
     color: #99a;
     font-size: 12px;
     cursor: pointer;
+    -webkit-user-select: none;
     user-select: none;
     transition: all .14s;
     white-space: nowrap;
@@ -397,6 +402,7 @@
     color: #444;
     font-size: 12px;
     cursor: pointer;
+    -webkit-user-select: none;
     user-select: none;
     transition: all .14s;
     white-space: nowrap;

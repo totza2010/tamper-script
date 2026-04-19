@@ -18,6 +18,7 @@
     justify-content: center;
     box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
     transition: all .18s;
+    -webkit-user-select: none;
     user-select: none;
 
     &:hover { border-color: #4cc; color: #4cc; }
@@ -71,6 +72,7 @@
     color: #567;
     cursor: pointer;
     border-bottom: 2px solid transparent;
+    -webkit-user-select: none;
     user-select: none;
     transition: all .14s;
 
@@ -97,6 +99,7 @@
     color: #889;
     font-size: 11px;
     cursor: pointer;
+    -webkit-user-select: none;
     user-select: none;
     transition: all .13s;
     display: flex;
