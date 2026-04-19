@@ -21,8 +21,27 @@
     &.open { right: 0; }
 }
 
-// ── Section grouping ──────────────────────────────────────────────────────────
-.unm-section { margin-bottom: 12px; }
+// ── Summary chips under header ────────────────────────────────────────────────
+.unm-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.unm-hcount {
+    padding: 3px 10px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: bold;
+
+    &.unm-hcount--warn { background: #2a1000; color: #f80; border: 1px solid #5a2800; }
+    &.unm-hcount--part { background: #0d1a2a; color: #5ad; border: 1px solid #1a3a55; }
+    &.unm-hcount--ok   { background: #0d2010; color: #5c5; border: 1px solid #1a4a2a; }
+}
+
+// ── Sections ──────────────────────────────────────────────────────────────────
+.unm-section { margin-bottom: 14px; }
 
 .unm-section-lbl {
     font-size: 10px;
@@ -33,58 +52,60 @@
     padding-left: 2px;
 }
 
-// ── File list ─────────────────────────────────────────────────────────────────
-.unm-file-list {
+.unm-section--problem  .unm-section-lbl { color: #f80; }
+.unm-section--multipart .unm-section-lbl { color: #5ad; }
+.unm-section--pending   .unm-section-lbl { color: #5c5; }
+
+// ── Card list ─────────────────────────────────────────────────────────────────
+.unm-card-list {
     display: flex;
     flex-direction: column;
-    gap: 0;
+    border-radius: 6px;
+    overflow: hidden;
 }
 
 .unm-file {
     background: #0d0d1e;
-    border-left: 3px solid #2a6a3a;
     border-bottom: 1px solid #1a1a2e;
     padding: 9px 11px;
 
-    // no match → orange accent
-    &.unm-unresolved {
-        border-left-color: #c05000;
-        background: #110800;
-    }
-
-    &:first-child { border-radius: 6px 6px 0 0; }
-    &:last-child  { border-radius: 0 0 6px 6px; border-bottom: none; }
-    &:only-child  { border-radius: 6px; border-bottom: none; }
+    &:last-child { border-bottom: none; }
 }
 
-// Filename — most important, large and clear
+.unm-section--problem   .unm-file { border-left: 3px solid #c05000; background: #110800; }
+.unm-section--multipart .unm-file { border-left: 3px solid #1a4a70; background: #080d18; }
+.unm-section--pending   .unm-file { border-left: 3px solid #1a5a2a; background: #060e08; }
+
+// ── Content inside each card ──────────────────────────────────────────────────
+
+// Filename — prominent
 .unm-filename {
     font-family: monospace;
-    font-size: 11.5px;
-    color: #dde;
+    font-size: 11px;
+    color: #ccd;
     word-break: break-all;
-    line-height: 1.4;
+    line-height: 1.45;
     margin-bottom: 2px;
 }
 
-// Parent folder path — secondary, very small
+// Parent folder path — secondary
 .unm-folder {
     font-family: monospace;
-    font-size: 9.5px;
-    color: #456;
+    font-size: 9px;
+    color: #3a4a55;
     word-break: break-all;
-    margin-bottom: 6px;
+    margin-bottom: 5px;
 }
 
-// Row: chips (size/quality) on left, episode badges on right
+// Row: chips left, episode badge right
 .unm-row2 {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     flex-wrap: wrap;
 }
 
-.unm-chips { display: flex; gap: 5px; flex-shrink: 0; }
+.unm-chips { display: flex; gap: 5px; }
 
 .unm-chip {
     padding: 2px 8px;
@@ -92,8 +113,8 @@
     font-size: 10px;
     font-weight: bold;
 
-    &.unm-chip-size    { background: #1a1a2e; color: #567; border: 1px solid #2a2a40; }
-    &.unm-chip-quality { background: #0d1e2a; color: #5ad; border: 1px solid #1a3a50; }
+    &.unm-chip-size    { background: #1a1a2e; color: #567;  border: 1px solid #2a2a40; }
+    &.unm-chip-quality { background: #0d1e2a; color: #5ad;  border: 1px solid #1a3a50; }
 }
 
 .unm-eps { display: flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
@@ -103,15 +124,27 @@
     border-radius: 10px;
     font-size: 10px;
     font-weight: bold;
-    background: #0d2010;
-    color: #5c5;
-    border: 1px solid #2a5a2a;
 
-    // no match pill
+    // episode matched
+    &.unm-ep-match {
+        background: #0d2010;
+        color: #5c5;
+        border: 1px solid #2a5a2a;
+    }
+
+    // no episode match → problem
     &.unm-ep-none {
         background: #1e0e00;
         color: #f80;
-        border-color: #5a2800;
+        border: 1px solid #5a2800;
+    }
+
+    // multi-part → informational
+    &.unm-ep-part {
+        background: #0d1a2a;
+        color: #5ad;
+        border: 1px solid #1a3a55;
+        text-transform: capitalize;
     }
 }
 
