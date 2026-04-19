@@ -148,6 +148,60 @@
     }
 }
 
+// ── Rename suggestion (multi-part) ───────────────────────────────────────────
+.unm-rename {
+    margin-top: 7px;
+    padding: 7px 9px;
+    background: #080e18;
+    border: 1px solid #1a3050;
+    border-radius: 5px;
+}
+
+.unm-rename-lbl {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: #3a5070;
+    margin-bottom: 4px;
+}
+
+.unm-rename-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.unm-rename-target {
+    flex: 1;
+    font-family: monospace;
+    font-size: 10px;
+    color: #7bc;
+    word-break: break-all;
+    line-height: 1.4;
+}
+
+.unm-copy-btn {
+    flex-shrink: 0;
+    padding: 3px 8px;
+    border-radius: 5px;
+    border: 1px solid #1a3a55;
+    background: #0d1e30;
+    color: #5ad;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all .14s;
+    line-height: 1;
+
+    &:hover    { border-color: #4ad; background: #112a40; }
+    &.copied   { border-color: #4d4; color: #4d4; background: #0d2010; }
+}
+
+.unm-rename--unknown {
+    font-size: 10px;
+    color: #456;
+    font-style: italic;
+}
+
 // Rejection warnings
 .unm-rejection {
     font-size: 10px;
