@@ -216,6 +216,11 @@ export function buildRGSuggestionUI(series, candidates) {
             (!val ? " empty" : vals.nets.length || vals.edts.length ? " has-network" : "");
     }
 
+    // Guard: prevent syncPreview from overwriting per-file values during initial setup.
+    // Picker constructors may fire the callback when setting initial values; we only
+    // want those writes to happen after the tree is fully rendered.
+    let initialized = false;
+
     /** Called whenever the picker changes — saves to fileValues and updates rows. */
     function syncPreview() {
         const nets = netComp.get(), edts = edtComp.get();
@@ -225,6 +230,9 @@ export function buildRGSuggestionUI(series, candidates) {
         preview.textContent = val || "—";
         preview.className = "ep-pop-preview" +
             (!val ? " empty" : nets.length || edts.length ? " has-network" : "");
+
+        // Don't touch fileValues until initialization is complete
+        if (!initialized) return;
 
         const newVals = { audioCodes: audio, subCodes: sub, nets, edts };
 
@@ -345,8 +353,11 @@ export function buildRGSuggestionUI(series, candidates) {
         }
     }
     renderTree();
-    // Initialize picker to "All files" view showing bestSugg values
+    // Initialize picker to "All files" view showing bestSugg values.
+    // Set initialized AFTER this so any sync callbacks fired by the pickers
+    // during setup do not overwrite the per-file fileValues.
     loadTarget(null);
+    initialized = true;
 
     function updateApplyBtn() {
         const btn = panel.querySelector("#rgsp-apply");
