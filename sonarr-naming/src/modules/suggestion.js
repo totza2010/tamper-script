@@ -234,20 +234,25 @@ export function buildRGSuggestionUI(series, candidates) {
         // Don't touch fileValues until initialization is complete
         if (!initialized) return;
 
-        const newVals = { audioCodes: audio, subCodes: sub, nets, edts };
-
         if (editTarget) {
-            // Save only to the focused file
-            fileValues.set(editTarget.id, newVals);
+            // Per-file mode: save all dimensions to the focused file
+            fileValues.set(editTarget.id, { audioCodes: audio, subCodes: sub, nets, edts });
             const span = tree.querySelector(`.rgsp-new-rg[data-file-id="${editTarget.id}"]`);
             if (span) span.textContent = val || "—";
         } else {
-            // Save to all checked files and update their rows
+            // "All files" mode: only nets & edts propagate to all checked files.
+            // Audio/sub codes stay per-file (each file keeps its own mediaInfo suggestion).
             for (const c of candidates) {
-                if (checked.has(c.id)) fileValues.set(c.id, { ...newVals });
+                if (!checked.has(c.id)) continue;
+                const fv = fileValues.get(c.id);
+                if (fv) fileValues.set(c.id, { ...fv, nets, edts });
             }
+            // Refresh tree rows using each file's own audio/sub
             tree.querySelectorAll(".rgsp-new-rg[data-file-id]").forEach(el => {
-                if (checked.has(parseInt(el.dataset.fileId))) el.textContent = val || "—";
+                const id = parseInt(el.dataset.fileId);
+                if (!checked.has(id)) return;
+                const fv = fileValues.get(id);
+                if (fv) el.textContent = buildValue(fv.nets, fv.edts, fv.audioCodes, fv.subCodes) || "—";
             });
         }
         updateApplyBtn();
