@@ -1,0 +1,129 @@
+// ── Shared panel chrome ───────────────────────────────────────────────────────
+// Used by both #rg-fix-panel and #rg-sugg-panel
+
+.rfp-head {
+    background: #13132a;
+    padding: 11px 14px;
+    font-weight: bold;
+    color: #6d6;
+    font-size: 13px;
+    border-bottom: 1px solid #2a2a45;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+.rfp-head-close { cursor: pointer; color: #789; font-size: 16px; }
+
+.rfp-body {
+    padding: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow-y: auto;
+}
+
+.rfp-desc {
+    font-size: 12px;
+    color: #aab;
+    margin: 0;
+    padding: 8px 10px;
+    background: #12122a;
+    border-radius: 6px;
+    border: 1px solid #2a2a45;
+}
+.rfp-desc code {
+    background: #0d3d20;
+    color: #6d6;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: monospace;
+}
+
+// ── Tree ─────────────────────────────────────────────────────────────────────
+.rfp-tree {
+    border: 1px solid #2a2a45;
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.rfp-season-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: #13132a;
+    cursor: pointer;
+    border-bottom: 1px solid #2a2a45;
+    user-select: none;
+
+    &:last-child { border-bottom: none; }
+    &:hover { background: #1a1a38; }
+}
+
+.rfp-season-label {
+    flex: 1;
+    font-weight: bold;
+    font-size: 12px;
+    color: #ccd;
+
+    em { color: #567; font-style: normal; font-size: 11px; }
+}
+.rfp-toggle { color: #567; font-size: 11px; padding: 0 4px; }
+
+.rfp-ep-list { background: #111120; }
+.rfp-ep-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 10px 6px 28px;
+    border-bottom: 1px solid #1a1a30;
+    font-size: 11px;
+
+    &:last-child { border-bottom: none; }
+}
+
+.rfp-ep-info { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.rfp-ep-label { color: #4cc; font-weight: bold; min-width: 52px; }
+.rfp-old   { color: #fa0; font-family: monospace; }
+.rfp-arrow { color: #456; }
+.rfp-new   { color: #6d6; font-family: monospace; font-weight: bold; }
+
+// ── Checkbox ─────────────────────────────────────────────────────────────────
+.rfp-chk {
+    accent-color: #4cc;
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+// ── Status ───────────────────────────────────────────────────────────────────
+.rfp-status {
+    font-size: 11px;
+    text-align: center;
+    padding: 6px 8px;
+    border-radius: 4px;
+    display: none;
+
+    &.ok      { display: block; background: #0d200d; color: #4d4; }
+    &.err     { display: block; background: #200d0d; color: #d44; }
+    &.loading { display: block; background: #0d1e2a; color: #4ad; }
+}
+
+.rfp-btns { display: flex; gap: 8px; flex-shrink: 0; }
+.rfp-btn {
+    flex: 1;
+    padding: 8px 0;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: bold;
+    cursor: pointer;
+}
+.rfp-cancel         { background: #2a2a3a; color: #889; }
+.rfp-cancel:hover   { background: #3a3a4a; }
+.rfp-confirm        { background: #1a5c2a; color: #cfc; }
+.rfp-confirm:hover  { background: #247a38; }
+.rfp-btn:disabled   { opacity: .4; cursor: default; }

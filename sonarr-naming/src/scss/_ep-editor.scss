@@ -1,0 +1,406 @@
+// ── Per-episode edit button ───────────────────────────────────────────────────
+.ep-rg-edit-btn {
+    margin-left: 5px;
+    padding: 0 5px;
+    border-radius: 4px;
+    border: 1px solid #3a3a55;
+    background: transparent;
+    color: #567;
+    cursor: pointer;
+    font-size: 11px;
+    vertical-align: middle;
+    transition: all .14s;
+    line-height: 1.6;
+    display: inline-block;
+
+    &:hover { border-color: #4cc; color: #4cc; background: #0d1a2a; }
+}
+
+// ── Per-episode RG popup ──────────────────────────────────────────────────────
+#ep-rg-popup {
+    position: fixed;
+    z-index: 10002;
+    background: #1a1a2e;
+    border: 1px solid #3a3a55;
+    border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, .75);
+    padding: 14px;
+    width: 420px;
+    max-height: 82vh;
+    overflow-y: auto;
+    font-family: sans-serif;
+    font-size: 13px;
+    color: #e0e0e0;
+}
+
+.ep-pop-head {
+    font-weight: bold;
+    color: #4cc;
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.ep-pop-close { cursor: pointer; color: #789; font-size: 16px; }
+.ep-pop-row { margin-bottom: 10px; }
+.ep-pop-lbl {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: #567;
+    margin-bottom: 5px;
+}
+.ep-pop-preview {
+    padding: 5px 10px;
+    border-radius: 5px;
+    background: #111;
+    border: 1px solid #222;
+    font-family: monospace;
+    font-size: 11px;
+    color: #6b6;
+    word-break: break-all;
+    min-height: 22px;
+
+    &.has-network { color: #fa0; }
+    &.empty { color: #444; font-style: italic; }
+}
+.ep-pop-btns { display: flex; gap: 8px; margin-top: 12px; }
+.ep-pop-btn {
+    flex: 1;
+    padding: 7px 0;
+    border: none;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: bold;
+    cursor: pointer;
+}
+.ep-pop-cancel       { background: #2a2a3a; color: #889; }
+.ep-pop-cancel:hover { background: #3a3a4a; }
+.ep-pop-save         { background: #1a5c2a; color: #cfc; }
+.ep-pop-save:hover   { background: #247a38; }
+.ep-pop-save:disabled { opacity: .4; cursor: default; }
+
+// ── Episode info box (inside popup) ──────────────────────────────────────────
+.ep-pop-epinfo {
+    margin-bottom: 10px;
+    padding: 8px 10px;
+    background: #0d0d1e;
+    border: 1px solid #2a2a40;
+    border-radius: 6px;
+    font-size: 11px;
+    color: #aab;
+}
+.ep-pop-epinfo-label {
+    font-weight: bold;
+    color: #7dd;
+    margin-bottom: 3px;
+    font-size: 12px;
+}
+.ep-pop-epinfo-path {
+    color: #567;
+    font-family: monospace;
+    font-size: 10px;
+    word-break: break-all;
+    margin-bottom: 3px;
+}
+.ep-pop-epinfo-rg {
+    color: #fa0;
+    font-size: 10px;
+
+    code {
+        background: #1a1000;
+        border-radius: 3px;
+        padding: 1px 5px;
+        font-family: monospace;
+    }
+}
+
+// ── Layout — RG picker container ──────────────────────────────────────────────
+#rg-container .rg-row {
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: 13px;
+}
+#rg-container .rg-label {
+    flex: 0 0 250px;
+    display: flex;
+    justify-content: flex-end;
+    margin-right: 20px;
+    padding-top: 7px;
+    font-weight: bold;
+    text-align: end;
+}
+#rg-container .rg-right {
+    flex: 1;
+    min-width: 0;
+}
+#rg-container .rg-dual {
+    display: flex;
+    gap: 10px;
+}
+#rg-container .rg-dual > * { flex: 1; min-width: 0; }
+
+// ── Dual layout (shared) ──────────────────────────────────────────────────────
+.rg-dual {
+    display: flex;
+    gap: 10px;
+}
+
+// ── Pill base ─────────────────────────────────────────────────────────────────
+.rg-pills { display: flex; flex-wrap: wrap; gap: 5px; }
+
+.rg-pill {
+    padding: 4px 12px;
+    border-radius: 14px;
+    border: 1px solid #3a3a55;
+    background: transparent;
+    color: #888;
+    cursor: pointer;
+    font-size: 12px;
+    user-select: none;
+    transition: background .14s, border-color .14s, color .14s;
+    white-space: nowrap;
+
+    &:hover { border-color: #666; color: #bbb; }
+}
+
+// Network — green
+.rg-pill.net.active { background: #1a3a10; border-color: #5c5; color: #7e7; font-weight: bold; }
+
+// Edition — amber
+.rg-pill.edt.active { background: #2a2000; border-color: #b80; color: #eb0; font-weight: bold; }
+
+// ── Language picker ───────────────────────────────────────────────────────────
+.rg-lang-col-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: #567;
+    margin-bottom: 5px;
+}
+
+// Selected chips row
+.rg-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    align-items: center;
+    min-height: 30px;
+}
+.rg-chip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px 3px 12px;
+    border-radius: 14px;
+    background: #0d3d58;
+    border: 1px solid #4cc;
+    color: #4ef;
+    font-size: 12px;
+    font-weight: bold;
+}
+.rg-chip-x {
+    cursor: pointer;
+    color: #789;
+    font-size: 13px;
+    line-height: 1;
+    padding: 0 1px;
+    transition: color .12s;
+
+    &:hover { color: #f88; }
+}
+
+.rg-add-btn {
+    padding: 3px 11px;
+    border-radius: 14px;
+    border: 1px dashed #4a4a66;
+    color: #667;
+    cursor: pointer;
+    font-size: 12px;
+    user-select: none;
+    transition: all .14s;
+
+    &:hover { border-color: #4cc; color: #9bb; }
+}
+
+// Expandable search panel
+.rg-lang-panel {
+    margin-top: 7px;
+    padding: 8px;
+    background: #12121e;
+    border: 1px solid #2a2a40;
+    border-radius: 8px;
+    display: none;
+
+    &.open { display: block; }
+}
+
+.rg-lang-search {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 5px 9px;
+    background: #1a1a2e;
+    border: 1px solid #3a3a55;
+    border-radius: 6px;
+    color: #ddd;
+    font-size: 12px;
+    margin-bottom: 7px;
+    outline: none;
+
+    &:focus { border-color: #4cc; }
+}
+
+.rg-lang-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    max-height: 130px;
+    overflow-y: auto;
+}
+.rg-lang-option {
+    padding: 3px 10px;
+    border-radius: 12px;
+    border: 1px solid #3a3a55;
+    background: transparent;
+    color: #889;
+    cursor: pointer;
+    font-size: 12px;
+    user-select: none;
+    transition: all .12s;
+
+    &:hover  { border-color: #4cc; color: #cce; }
+    &.chosen { display: none; }
+    &.hidden { display: none; }
+}
+
+// ── Preview ───────────────────────────────────────────────────────────────────
+#rg-preview {
+    padding: 6px 11px;
+    border-radius: 6px;
+    background: #111;
+    border: 1px solid #222;
+    font-size: 12px;
+    font-family: monospace;
+    color: #6b6;
+    word-break: break-all;
+    min-height: 28px;
+
+    &.has-network { color: #fa0; }
+    &.empty       { color: #444; font-style: italic; }
+}
+
+// ── FAB buttons ───────────────────────────────────────────────────────────────
+.rg-fab-side {
+    position: fixed;
+    left: 24px;
+    z-index: 9999;
+    width: 34px;
+    height: 34px;
+    border-radius: 17px;
+    background: #1a1a2e;
+    border: 1px solid #2a2a45;
+    color: #567;
+    font-size: 15px;
+    cursor: pointer;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .4);
+    transition: all .18s;
+    user-select: none;
+
+    &.visible { display: flex; }
+}
+
+#rg-check-btn { bottom: 66px; }
+#rg-check-btn:hover   { border-color: #4ad; color: #4ad; }
+#rg-check-btn.spinning { color: #fa0; border-color: #fa0; animation: rg-spin .8s linear infinite; }
+
+#rg-strip-btn { bottom: 108px; }
+#rg-strip-btn:hover   { border-color: #6d6; color: #6d6; }
+#rg-strip-btn.spinning { color: #fa0; border-color: #fa0; animation: rg-spin .8s linear infinite; }
+
+#rg-suggest-btn { bottom: 150px; }
+#rg-suggest-btn:hover { border-color: #fa0; color: #fa0; }
+#rg-suggest-btn.has-suggestions { border-color: #fa0; color: #fa0; background: #1e1200; }
+#rg-suggest-btn.spinning { animation: rg-spin .8s linear infinite; }
+
+@keyframes rg-spin { to { transform: rotate(360deg); } }
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+#rg-toast {
+    position: fixed;
+    bottom: 70px;
+    left: 70px;
+    z-index: 10003;
+    background: #0d200d;
+    border: 1px solid #4a6;
+    color: #6d6;
+    padding: 7px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-family: sans-serif;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .5);
+    pointer-events: none;
+    animation: rg-fadein .15s ease;
+}
+@keyframes rg-fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; } }
+
+// ── Quick-action toolbar (Interactive Import) ─────────────────────────────────
+#ii-shortcuts {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+.ii-btn {
+    padding: 6px 13px;
+    border-radius: 14px;
+    border: 1px solid #3a3a55;
+    background: #1a1a2e;
+    color: #99a;
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+    transition: all .14s;
+    white-space: nowrap;
+
+    &:hover         { border-color: #4cc; color: #cce; background: #12122a; }
+    &.ii-rg         { border-color: #4a6; color: #7c7; }
+    &.ii-rg:hover   { border-color: #6d6; color: #9e9; background: #101a10; }
+    &.ii-q          { border-color: #66a; color: #99c; }
+    &.ii-q:hover    { border-color: #99d; color: #bbd; background: #12121e; }
+    &.ii-lang       { border-color: #a66; color: #c99; }
+    &.ii-lang:hover { border-color: #d88; color: #daa; background: #1e1010; }
+}
+.ii-divider {
+    width: 1px;
+    height: 20px;
+    background: #2a2a40;
+    margin: 0 2px;
+}
+
+// ── Quality pills ─────────────────────────────────────────────────────────────
+#sq-pills-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 16px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid #e0e0e0;
+}
+.sq-pill {
+    padding: 5px 13px;
+    border-radius: 14px;
+    border: 1px solid #ccc;
+    background: #f4f4f4;
+    color: #444;
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+    transition: all .14s;
+    white-space: nowrap;
+
+    &:hover  { border-color: #4a8; background: #eaf4ee; color: #2a6; }
+    &.active { border-color: #4a8; background: #d4edda; color: #195; font-weight: bold; }
+}

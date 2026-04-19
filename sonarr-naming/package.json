@@ -1,0 +1,21 @@
+{
+  "name": "sonarr-naming",
+  "version": "1.0.0",
+  "description": "Sonarr Release Group picker userscript",
+  "scripts": {
+    "dev": "webpack --mode=development --watch",
+    "build": "webpack --mode=production",
+    "build:dev": "webpack --mode=development"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.23.0",
+    "@babel/preset-env": "^7.23.0",
+    "babel-loader": "^9.1.3",
+    "css-loader": "^6.8.1",
+    "sass": "^1.69.0",
+    "sass-loader": "^13.3.2",
+    "style-loader": "^3.3.3",
+    "webpack": "^5.89.0",
+    "webpack-cli": "^5.1.4"
+  }
+}

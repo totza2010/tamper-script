@@ -1,0 +1,25 @@
+// ── #rg-fix-panel — Strip prefix slide-in ────────────────────────────────────
+
+#rg-fix-panel {
+    position: fixed;
+    top: 0;
+    right: -480px;
+    z-index: 9998;
+    width: 460px;
+    height: 100vh;
+    background: #1a1a2e;
+    color: #e0e0e0;
+    border-radius: 12px 0 0 12px;
+    box-shadow: -4px 0 28px rgba(0, 0, 0, .6);
+    font-family: sans-serif;
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    transition: right .3s ease;
+
+    &.open {
+        right: 0;
+        border-radius: 0;
+    }
+}
