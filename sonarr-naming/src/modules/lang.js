@@ -26,9 +26,19 @@ export function sortedLangs() {
     return [...pinned, ...rest];
 }
 
-/** Map a Sonarr mediaInfo language name to a 2-char ISO code, or "" if unknown. */
+/**
+ * Map a language name/code to a 2-char ISO 639-1 code, or "" if unknown.
+ *
+ * Resolution order:
+ *   1. LANG_NAME_MAP  — ISO 639-2 codes used by Sonarr mediaInfo  (e.g. "tha" → "TH")
+ *   2. LANGS labels   — full English names used by series/file API  (e.g. "Korean" → "KO")
+ */
 export function mapLangNameToCode(name) {
-    return LANG_NAME_MAP[name?.toLowerCase().trim() ?? ""] ?? "";
+    const lower = name?.toLowerCase().trim() ?? "";
+    if (!lower) return "";
+    return LANG_NAME_MAP[lower]
+        ?? LANGS.find(l => l.label.toLowerCase() === lower)?.value
+        ?? "";
 }
 
 /**
