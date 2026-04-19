@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Sonarr Release Group
 // @namespace    http://tampermonkey.net/
-// @version      9.6
+// @version      9.7
 // @description  Release Group picker + Series page auto-fix [network]- prefix
 // @match        https://sonarr-hd.privox.top/*
 // @match        https://sonarr-uhd.privox.top/*
@@ -124,6 +124,36 @@
         { label: "Ukrainian",  value: "UK" },
     ];
 
+    // ── Language name / code → ISO 639-1 2-char code ─────────────────────────
+    // Covers:
+    //   • Full names  (from file.languages[].name  e.g. "Thai", "Korean")
+    //   • ISO 639-2/T (from mediaInfo.audioLanguages e.g. "tha", "kor", "eng/tha")
+    //   • ISO 639-2/B alternates (e.g. "chi" for Chinese, "ger" for German)
+    const LANG_NAME_MAP = {
+        // ── ISO 639-2/T codes (used by MediaInfo → Sonarr mediaInfo fields) ─
+        "tha": "TH",  "eng": "EN",  "zho": "ZH",  "chi": "ZH",
+        "jpn": "JA",  "kor": "KO",  "msa": "MS",  "may": "MS",
+        "ind": "ID",  "vie": "VI",  "tgl": "TL",
+        "mya": "MY",  "bur": "MY",  "khm": "KM",  "lao": "LO",
+        "hin": "HI",  "ara": "AR",  "bul": "BG",  "cat": "CA",
+        "hrv": "HR",  "ces": "CS",  "cze": "CS",  "dan": "DA",
+        "nld": "NL",  "dut": "NL",  "est": "ET",  "fin": "FI",
+        "fra": "FR",  "fre": "FR",  "deu": "DE",  "ger": "DE",
+        "ell": "EL",  "gre": "EL",  "heb": "HE",  "hun": "HU",
+        "ita": "IT",  "lav": "LV",  "lit": "LT",  "nor": "NO",
+        "pol": "PL",  "por": "PT",  "ron": "RO",  "rum": "RO",
+        "rus": "RU",  "srp": "SR",  "slk": "SK",  "slo": "SK",
+        "slv": "SL",  "spa": "ES",  "swe": "SV",  "tur": "TR",
+        "ukr": "UK",
+    };
+
+    // HDTV quality id → WEBDL replacement (standard Sonarr quality IDs)
+    const HDTV_FIX = {
+        4:  { id: 5,  name: "WEBDL-720p"  },   // HDTV-720p  → WEBDL-720p
+        9:  { id: 3,  name: "WEBDL-1080p" },   // HDTV-1080p → WEBDL-1080p
+        16: { id: 19, name: "WEBDL-2160p" },   // HDTV-2160p → WEBDL-2160p
+    };
+
     const MAX_LANG = 4;
 
     // Languages pinned at the top regardless of usage stats
@@ -152,6 +182,106 @@
             .filter(l => !LANG_PINNED.includes(l.value))
             .sort((a, b) => (s[b.value] || 0) - (s[a.value] || 0));
         return [...pinned, ...rest];
+    }
+
+    /** Map a Sonarr mediaInfo language name to a 2-char ISO code, or "" if unknown. */
+    function mapLangNameToCode(name) {
+        return LANG_NAME_MAP[name?.toLowerCase().trim() ?? ""] ?? "";
+    }
+
+    /**
+     * Split a Sonarr language string into 2-char codes.
+     * Handles:
+     *   "Thai / Korean"    → ["TH","KO"]  (full names, slash-separated)
+     *   "eng/tha"          → ["EN","TH"]  (ISO 639-2, slash-separated)
+     *   "eng/eng/tha/tha"  → ["EN","TH"]  (deduplicated)
+     */
+    function parseLangString(str) {
+        if (!str) return [];
+        const codes = str.split(/[/,]/).map(s => mapLangNameToCode(s)).filter(Boolean);
+        return [...new Set(codes)]; // deduplicate while preserving order
+    }
+
+    /**
+     * Sort audio codes by priority: TH first, EN second, then original language(s).
+     * Max 3 total (TH + EN + 1 original).
+     */
+    /**
+     * Sort language codes by priority: TH → EN → originalCode → (others excluded).
+     * Only the three "sanctioned" slots are kept; random extra languages are dropped.
+     *
+     * @param {string[]} codes        - deduplicated 2-letter codes from parseLangString
+     * @param {string}   originalCode - 2-letter code of the series' original language
+     *                                  (e.g. "KO" for Korean). Pass "" to keep legacy
+     *                                  "include any 3" behaviour (backwards compat).
+     */
+    function sortAudioCodes(codes, originalCode) {
+        const PRIORITY = ["TH", "EN"];
+        const result   = PRIORITY.filter(c => codes.includes(c));
+        // Add the series original language as 3rd slot only if it's available in the
+        // tracks AND it isn't already captured by the fixed priority list above.
+        if (originalCode && !PRIORITY.includes(originalCode) && codes.includes(originalCode)) {
+            result.push(originalCode);
+        }
+        // No other languages are included — they are not part of our naming convention.
+        return result.slice(0, 3);
+    }
+
+    /**
+     * Compute suggested RG language parts from a file's mediaInfo + languages.
+     *
+     * Two data sources (most reliable first):
+     *   1. file.mediaInfo.audioLanguages / file.mediaInfo.subtitles
+     *      — populated by MediaInfo scan (may be empty if scan wasn't run)
+     *   2. file.languages  [{id, name}]
+     *      — recorded by Sonarr at import time; always present when Sonarr
+     *        knows the language (this is what the "Thai, Korean" table column shows)
+     *
+     * Note: Sonarr's mediaInfo uses `subtitles` (NOT `subtitleLanguages`) for the
+     * subtitle language string.
+     *
+     * Returns {audioCodes, subCodes} or null if no usable language data.
+     */
+    /**
+     * @param {object} file          - Sonarr episodefile object
+     * @param {string} originalCode  - 2-letter code of the series' original language
+     *                                 e.g. "KO" — used to pick the 3rd-priority slot
+     */
+    function suggestRGFromFile(file, originalCode) {
+        let audioCodes = [];
+        let subCodes   = [];
+
+        // Source 1: mediaInfo (actual file analysis)
+        const mi = file.mediaInfo;
+        if (mi) {
+            audioCodes = parseLangString(mi.audioLanguages ?? "");
+            // Sonarr uses "subtitles" (not "subtitleLanguages") in the mediaInfo schema
+            subCodes   = parseLangString(mi.subtitles ?? mi.subtitleLanguages ?? "");
+        }
+
+        // Source 2: file.languages [{id, name}]  — fallback when mediaInfo not scanned
+        // (This is what Sonarr records at import time, and what the table column shows)
+        if (!audioCodes.length && Array.isArray(file.languages) && file.languages.length) {
+            audioCodes = [...new Set(
+                file.languages.map(l => mapLangNameToCode(l.name ?? "")).filter(Boolean)
+            )];
+        }
+
+        // Apply priority ordering: TH → EN → series original language (max 3)
+        // Random other languages (e.g. Indonesian for a Korean series) are excluded.
+        audioCodes = sortAudioCodes(audioCodes, originalCode);
+        subCodes   = sortAudioCodes(subCodes,   originalCode);
+
+        if (!audioCodes.length && !subCodes.length) return null;
+        return { audioCodes, subCodes };
+    }
+
+    /**
+     * Returns true if this file needs an RG suggestion:
+     * releaseGroup is empty OR does not contain "Audio".
+     */
+    function needsRGSuggestion(file) {
+        return !(file.releaseGroup ?? "").includes("Audio");
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -357,7 +487,13 @@
         // Returns ordered array of selected values (in pill order)
         const get = () =>
             [...wrap.querySelectorAll(".rg-pill.active")].map(p => p.dataset.value);
-        return { el: wrap, get };
+        // Set active values without triggering onChange (silent=true) or with (silent=false)
+        const set = (values, silent) => {
+            wrap.querySelectorAll(".rg-pill").forEach(p =>
+                p.classList.toggle("active", values.includes(p.dataset.value)));
+            if (!silent) onChange();
+        };
+        return { el: wrap, get, set };
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -472,7 +608,16 @@
         renderChips();
 
         const get = () => [...selected];
-        return { el: root, get };
+        // Replace current selection with new codes, optionally silently
+        const set = (codes, silent) => {
+            selected.length = 0;
+            codes.forEach(c => selected.push(c));
+            grid.querySelectorAll(".rg-lang-option").forEach(opt =>
+                opt.classList.toggle("chosen", selected.includes(opt.dataset.value)));
+            renderChips();
+            if (!silent) onChange();
+        };
+        return { el: root, get, set };
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -830,6 +975,30 @@
         return method === "DELETE" ? null : res.json();
     }
 
+    /**
+     * Poll GET /api/v3/command/{id} until the command reaches a terminal state.
+     *
+     * @param {number}   cmdId      - command ID returned by the POST /api/v3/command response
+     * @param {function} [onStatus] - optional callback(statusText) called on each poll tick
+     * @param {number}   [maxMs]    - give up after this many ms (default 5 minutes)
+     * @returns {Promise<object>}   - the final command object
+     * @throws  if the command failed/aborted or timed out
+     */
+    async function waitForCommand(cmdId, onStatus, maxMs = 300_000) {
+        const INTERVAL  = 2000;
+        const deadline  = Date.now() + maxMs;
+        while (Date.now() < deadline) {
+            const cmd = await apiReq("GET", `/api/v3/command/${cmdId}`);
+            if (onStatus) onStatus(cmd.status);
+            if (cmd.status === "completed") return cmd;
+            if (cmd.status === "failed" || cmd.status === "aborted") {
+                throw new Error(`Rename command ${cmd.status}: ${cmd.message || ""}`);
+            }
+            await new Promise(r => setTimeout(r, INTERVAL));
+        }
+        throw new Error("Rename command timed out");
+    }
+
     // ══════════════════════════════════════════════════════════════════════════
     //  STYLES — per-episode editor · rename notification · settings panel
     // ══════════════════════════════════════════════════════════════════════════
@@ -1175,9 +1344,10 @@
                             rgCell.insertBefore(document.createTextNode(value), anchorEl);
                         }
                         // Refresh button tooltip with new value
-                        const latestEp = _spData?.epMap.get(file.id);
-                        anchorEl.title = latestEp
-                            ? `Edit RG — ${fmtEp(latestEp)} ${latestEp.title ?? ""} (${value || "—"})`
+                        const latestEpArr = _spData?.epMap.get(file.id);
+                        const latestEp0   = firstEp(latestEpArr);
+                        anchorEl.title = latestEpArr
+                            ? `Edit RG — ${fmtEp(latestEpArr)} ${latestEp0?.title ?? ""} (${value || "—"})`
                             : `Edit Release Group (${value || "—"})`;
                         // NOTE: intentionally do NOT delete epEditAdded —
                         // deleting it causes MutationObserver to inject a duplicate button.
@@ -1318,21 +1488,22 @@
                 return;
             }
 
-            const ep = _spData.epMap.get(file.id);
+            const epArr = _spData.epMap.get(file.id) ?? [];
+            const ep0   = firstEp(epArr);
 
             const btn = document.createElement("span");
             btn.className    = "ep-rg-edit-btn";
-            btn.title        = ep
-                ? `Edit RG — ${fmtEp(ep)} ${ep.title ?? ""} (${file.releaseGroup || "—"})`
+            btn.title        = epArr.length
+                ? `Edit RG — ${fmtEp(epArr)} ${ep0?.title ?? ""} (${file.releaseGroup || "—"})`
                 : `Edit Release Group (${file.releaseGroup || "—"})`;
             btn.textContent  = "✎";
             btn.dataset.fileId = String(file.id); // visible in DevTools for debugging
 
             btn.addEventListener("click", e => {
                 e.stopPropagation();
-                const latest   = _spData?.files.find(f => f.id === file.id) ?? file;
-                const latestEp = _spData?.epMap.get(latest.id);
-                openEpRGEditor(btn, latest, latestEp);
+                const latest     = _spData?.files.find(f => f.id === file.id) ?? file;
+                const latestEpArr = _spData?.epMap.get(latest.id) ?? [];
+                openEpRGEditor(btn, latest, firstEp(latestEpArr));
             });
             cell.appendChild(btn);
             // Mark as processed ONLY after successful injection so failed-match cells
@@ -1354,7 +1525,7 @@
      * Sonarr's /rename endpoint returns files whose current filename differs from
      * what Sonarr would generate given the current metadata.
      */
-    async function checkRenameMismatch(series, fileIds) {
+    async function checkRenameMismatch(series, fileIds, afterRenameCb) {
         if (!series) return;
         try {
             const results = await apiReq("GET", `/api/v3/rename?seriesId=${series.id}`);
@@ -1362,11 +1533,11 @@
                 ? results.filter(r => fileIds.includes(r.episodeFileId))
                 : results;
             if (pending.length === 0) return;
-            showRenameNotif(series, pending);
+            showRenameNotif(series, pending, afterRenameCb);
         } catch (e) { console.warn("[RG Rename]", e.message); }
     }
 
-    function showRenameNotif(series, items) {
+    function showRenameNotif(series, items, afterRenameCb) {
         document.getElementById("rg-rename-notif")?.remove();
 
         const notif = document.createElement("div");
@@ -1406,13 +1577,17 @@
             const btn = notif.querySelector("#rn-do-rename");
             btn.disabled = true; btn.textContent = "Renaming…";
             try {
-                await apiReq("POST", "/api/v3/command", {
+                const cmd = await apiReq("POST", "/api/v3/command", {
                     name: "RenameFiles",
                     seriesId: series.id,
                     files: items.map(r => r.episodeFileId),
                 });
+                // Poll until Sonarr actually finishes — then fire afterRenameCb
+                await waitForCommand(cmd.id,
+                    st => { btn.textContent = `Renaming… (${st})`; });
                 btn.textContent = "✓ Done";
-                setTimeout(() => notif.remove(), 2000);
+                if (afterRenameCb) afterRenameCb();
+                setTimeout(() => notif.remove(), 1500);
             } catch (e) {
                 btn.textContent = "✗ Error"; btn.disabled = false;
                 setTimeout(() => { btn.textContent = "Rename Now"; }, 2500);
@@ -1625,6 +1800,10 @@
 #rg-strip-btn { bottom: 108px; }
 #rg-strip-btn:hover   { border-color: #6d6; color: #6d6; }
 #rg-strip-btn.spinning { color: #fa0; border-color: #fa0; animation: rg-spin .8s linear infinite; }
+#rg-suggest-btn { bottom: 150px; }
+#rg-suggest-btn:hover { border-color: #fa0; color: #fa0; }
+#rg-suggest-btn.has-suggestions { border-color: #fa0; color: #fa0; background: #1e1200; }
+#rg-suggest-btn.spinning { animation: rg-spin .8s linear infinite; }
 @keyframes rg-spin { to { transform: rotate(360deg); } }
 /* brief toast */
 #rg-toast {
@@ -1687,11 +1866,35 @@
         document.body.appendChild(btn);
     })();
 
+    // 💡 RG Suggestion button
+    ;(function initSuggestBtn() {
+        const btn = document.createElement("div");
+        btn.id        = "rg-suggest-btn";
+        btn.className = "rg-fab-side";
+        btn.title     = "Suggest Release Group from mediaInfo";
+        btn.textContent = "💡";
+        btn.addEventListener("click", async () => {
+            if (!_spData?.series || btn.classList.contains("spinning")) return;
+            // Toggle: if panel is open, just close it
+            const existingPanel = document.getElementById("rg-sugg-panel");
+            if (existingPanel?.classList.contains("open")) {
+                existingPanel.classList.remove("open");
+                return;
+            }
+            btn.classList.add("spinning");
+            try {
+                await recheckRGSuggestions();
+            } finally {
+                btn.classList.remove("spinning");
+            }
+        });
+        document.body.appendChild(btn);
+    })();
+
     /** Re-fetch episode files and rebuild the Strip-prefix UI without page reload. */
     async function recheckPrefixFiles() {
         if (!_spData?.series) return;
         // Remove old fix UI so it refreshes cleanly
-        document.getElementById("rg-fix-fab")?.remove();
         document.getElementById("rg-fix-panel")?.remove();
         try {
             const files = await apiReq("GET", `/api/v3/episodefile?seriesId=${_spData.series.id}`);
@@ -1701,12 +1904,13 @@
                 .filter(f => prefixAlreadyInFilename(f))
                 .map(f => ({
                     ...f,
-                    ep: _spData.epMap.get(f.id) ?? null,
+                    ep: _spData.epMap.get(f.id) ?? [],
                     newReleaseGroup: (f.releaseGroup || "").replace(RG_PREFIX_RE, ""),
                 }))
                 .sort((a, b) => {
-                    const ds = (a.ep?.seasonNumber ?? 0) - (b.ep?.seasonNumber ?? 0);
-                    return ds !== 0 ? ds : (a.ep?.episodeNumber ?? 0) - (b.ep?.episodeNumber ?? 0);
+                    const ae = firstEp(a.ep), be = firstEp(b.ep);
+                    const ds = (ae?.seasonNumber ?? 0) - (be?.seasonNumber ?? 0);
+                    return ds !== 0 ? ds : (ae?.episodeNumber ?? 0) - (be?.episodeNumber ?? 0);
                 });
 
             if (affected.length > 0) {
@@ -1725,28 +1929,15 @@
     // ══════════════════════════════════════════════════════════════════════════
 
     document.head.insertAdjacentHTML("beforeend", `<style>
-#rg-fix-fab {
-    position:fixed; bottom:24px; right:24px; z-index:9999;
-    background:#1a5c2a; color:#fff; border:none; border-radius:22px;
-    padding:10px 18px; font-size:13px; font-weight:bold; cursor:pointer;
-    box-shadow:0 3px 14px rgba(0,0,0,.5);
-    display:flex; align-items:center; gap:8px;
-    transition:background .2s; user-select:none;
-}
-#rg-fix-fab:hover { background:#247a38; }
-#rg-fix-fab .rfab-count {
-    background:#fff; color:#1a5c2a; border-radius:10px;
-    padding:1px 7px; font-size:11px; font-weight:bold;
-}
 #rg-fix-panel {
-    position:fixed; bottom:72px; right:24px; z-index:9998;
-    width:460px; background:#1a1a2e; color:#e0e0e0;
-    border-radius:12px; box-shadow:0 6px 28px rgba(0,0,0,.6);
+    position:fixed; top:0; right:-480px; z-index:9998;
+    width:460px; height:100vh; background:#1a1a2e; color:#e0e0e0;
+    border-radius:12px 0 0 12px; box-shadow:-4px 0 28px rgba(0,0,0,.6);
     font-family:sans-serif; font-size:13px;
-    display:none; flex-direction:column; overflow:hidden;
-    max-height:90vh;
+    display:flex; flex-direction:column; overflow:hidden;
+    transition:right .3s ease;
 }
-#rg-fix-panel.open { display:flex; }
+#rg-fix-panel.open { right:0; border-radius:0; }
 .rfp-head {
     background:#13132a; padding:11px 14px; font-weight:bold;
     color:#6d6; font-size:13px; border-bottom:1px solid #2a2a45;
@@ -1840,20 +2031,591 @@
         return basename.includes(prefix);
     }
 
+    /**
+     * Format episode label from a single episode object or an array of episodes.
+     * Multi-episode files show a range: S01E117-E119.
+     */
     function fmtEp(ep) {
-        if (!ep) return "?";
-        const s = String(ep.seasonNumber).padStart(2, "0");
-        const e = String(ep.episodeNumber).padStart(2, "0");
-        return `S${s}E${e}`;
+        const eps = Array.isArray(ep) ? ep : (ep ? [ep] : []);
+        if (!eps.length) return "?";
+        const pad   = n => String(n).padStart(2, "0");
+        const first = eps[0];
+        const last  = eps[eps.length - 1];
+        const sn    = pad(first.seasonNumber);
+        if (eps.length === 1) return `S${sn}E${pad(first.episodeNumber)}`;
+        if (first.seasonNumber === last.seasonNumber)
+            return `S${sn}E${pad(first.episodeNumber)}-E${pad(last.episodeNumber)}`;
+        return `S${sn}E${pad(first.episodeNumber)}…`;
+    }
+
+    /** Return the first episode from an epMap value (array or single, may be null). */
+    function firstEp(epVal) {
+        return Array.isArray(epVal) ? (epVal[0] ?? null) : (epVal ?? null);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  RG SUGGESTION — detect missing Audio in Release Group, suggest from mediaInfo
+    // ══════════════════════════════════════════════════════════════════════════
+
+    document.head.insertAdjacentHTML("beforeend", `<style>
+/* ── RG Suggestion slide panel ───────────────────────────────────────────── */
+#rg-sugg-panel {
+    position: fixed; top: 0; right: -460px;
+    width: 440px; height: 100vh;
+    background: #12121e; border-left: 1px solid #2a2a40; z-index: 10000;
+    display: flex; flex-direction: column;
+    box-shadow: -8px 0 32px rgba(0,0,0,.65);
+    font-family: sans-serif; font-size: 13px; color: #e0e0e0;
+    transition: right .25s ease; overflow: hidden;
+}
+#rg-sugg-panel.open { right: 0; }
+.rgsp-head {
+    background: #1e1400; padding: 13px 16px;
+    font-size: 13px; font-weight: bold; color: #fa0;
+    border-bottom: 1px solid #3a2a00;
+    display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;
+}
+.rgsp-close { cursor: pointer; color: #789; font-size: 18px; }
+.rgsp-body { flex: 1; overflow-y: auto; padding: 12px; }
+.rgsp-desc {
+    font-size: 11px; color: #aab; margin-bottom: 10px; padding: 8px 10px;
+    background: #1a1200; border-radius: 6px; border: 1px solid #3a2800;
+}
+.rgsp-section-lbl {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+    color: #456; margin: 10px 0 5px;
+}
+.rgsp-picker-box {
+    border: 1px solid #2a2a45; border-radius: 8px;
+    padding: 10px; background: #0d0d1e; margin-bottom: 8px;
+}
+.rgsp-picker-sub-lbl {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+    color: #567; margin: 7px 0 4px;
+}
+/* Quality fix toggle row */
+.rgsp-quality-row {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 8px 10px; border-radius: 6px;
+    background: #1e1400; border: 1px solid #4a3000;
+    margin-bottom: 8px; cursor: pointer;
+}
+.rgsp-quality-txt { flex: 1; }
+.rgsp-quality-label { font-size: 12px; color: #fa0; display: block; }
+.rgsp-quality-detail { font-size: 10px; color: #789; margin-top: 2px; display: block; }
+.rgsp-quality-chk { accent-color: #fa0; width: 15px; height: 15px; cursor: pointer; flex-shrink: 0; margin-top: 2px; }
+/* Apply status */
+.rgsp-status {
+    font-size: 11px; text-align: center; margin-top: 8px;
+    padding: 6px 8px; border-radius: 4px; display: none;
+}
+.rgsp-status.ok      { display: block; background: #0d200d; color: #4d4; }
+.rgsp-status.err     { display: block; background: #200d0d; color: #d44; }
+.rgsp-status.loading { display: block; background: #0d1e2a; color: #4ad; }
+/* Edit-target indicator above picker */
+.rgsp-edit-target-bar {
+    display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
+    font-size: 11px; color: #789;
+}
+.rgsp-edit-target-val { color: #4ef; font-weight: bold; }
+/* Focused (being-edited) row in tree */
+.rfp-ep-row.rgsp-focused {
+    background: #0d1f2a; border-radius: 5px;
+    outline: 1px solid #2a7aaa;
+}
+/* Clickable area of each ep row (everything except the checkbox) */
+.rfp-ep-edit-area { flex: 1; display: flex; align-items: center; gap: 4px; cursor: pointer; }
+.rfp-ep-edit-area:hover .rfp-ep-label { text-decoration: underline dotted; }
+/* Footer */
+.rgsp-footer {
+    padding: 10px 12px; border-top: 1px solid #2a2a40;
+    display: flex; gap: 8px; flex-shrink: 0;
+}
+.rgsp-btn {
+    flex: 1; padding: 8px 0; border: none; border-radius: 6px;
+    font-size: 12px; font-weight: bold; cursor: pointer;
+}
+.rgsp-cancel { background: #2a2a3a; color: #889; }
+.rgsp-cancel:hover { background: #3a3a4a; }
+.rgsp-apply { background: #1a4070; color: #6ae; }
+.rgsp-apply:hover { background: #1f4d88; }
+.rgsp-apply:disabled { opacity: .4; cursor: default; }
+</style>`);
+
+    /** Re-fetch files and rebuild RG suggestion panel. Called from the 💡 FAB. */
+    async function recheckRGSuggestions() {
+        if (!_spData?.series) return;
+        try {
+            const files = await apiReq("GET", `/api/v3/episodefile?seriesId=${_spData.series.id}`);
+            _spData.files = files;
+
+            const candidates = _buildSuggCandidates(files, _spData.epMap, _spData.series);
+
+            if (candidates.length > 0) {
+                buildRGSuggestionUI(_spData.series, candidates);
+            } else {
+                document.getElementById("rg-sugg-panel")?.remove();
+                showToast("✓ All files have Audio in Release Group");
+                document.getElementById("rg-suggest-btn")?.classList.remove("has-suggestions");
+            }
+        } catch (e) {
+            showToast("✗ " + e.message.slice(0, 60));
+        }
+    }
+
+    /** Build sorted suggestion candidate list from files + epMap. */
+    function _buildSuggCandidates(files, epMap, series) {
+        // Derive the series' original language code (e.g. "KO" for Korean)
+        // used as the 3rd-priority slot in sortAudioCodes.
+        const originalCode = mapLangNameToCode(series?.originalLanguage?.name ?? "");
+        return files
+            .filter(f => needsRGSuggestion(f))
+            .map(f => ({
+                ...f,
+                ep:         epMap.get(f.id) ?? [],
+                suggestion: suggestRGFromFile(f, originalCode),
+            }))
+            .filter(c => c.suggestion !== null)
+            .sort((a, b) => {
+                const ae = firstEp(a.ep), be = firstEp(b.ep);
+                const ds = (ae?.seasonNumber ?? 0) - (be?.seasonNumber ?? 0);
+                return ds !== 0 ? ds : (ae?.episodeNumber ?? 0) - (be?.episodeNumber ?? 0);
+            });
+    }
+
+    /** Build the RG suggestion slide panel. */
+    function buildRGSuggestionUI(series, candidates) {
+        document.getElementById("rg-sugg-panel")?.remove();
+
+        // ── Most common suggestion (for pre-fill) ────────────────────────────
+        const counts = new Map();
+        for (const c of candidates) {
+            if (!c.suggestion) continue;
+            const key = c.suggestion.audioCodes.join(",") + "|" + c.suggestion.subCodes.join(",");
+            const prev = counts.get(key);
+            if (prev) prev.count++;
+            else counts.set(key, { count: 1, suggestion: c.suggestion });
+        }
+        let bestSugg = { audioCodes: [], subCodes: [] };
+        let bestCount = 0;
+        counts.forEach(({ count, suggestion }) => {
+            if (count > bestCount) { bestCount = count; bestSugg = suggestion; }
+        });
+
+        // ── HDTV candidates ──────────────────────────────────────────────────
+        const hdtvFiles = candidates.filter(c => HDTV_FIX[c.quality?.quality?.id]);
+
+        // ── Total episode count (for multi-episode files) ────────────────────
+        const totalEpCount = candidates.reduce(
+            (s, c) => s + (Array.isArray(c.ep) ? c.ep.length : (c.ep ? 1 : 0)), 0);
+
+        // ── Group by season (use first episode in multi-ep files) ────────────
+        const bySeason = new Map();
+        for (const c of candidates) {
+            const sn = firstEp(c.ep)?.seasonNumber ?? 0;
+            if (!bySeason.has(sn)) bySeason.set(sn, []);
+            bySeason.get(sn).push(c);
+        }
+        const seasons = [...bySeason.keys()].sort((a, b) => a - b);
+        const checked = new Set(candidates.map(c => c.id));
+
+        // ── Panel skeleton ───────────────────────────────────────────────────
+        const renameNowDefault = GM_getValue("rgsp_rename_now", true);
+
+        const panel = document.createElement("div");
+        panel.id = "rg-sugg-panel";
+        panel.innerHTML = `
+            <div class="rgsp-head">
+                💡 Suggest Release Group
+                <span class="rgsp-close">✕</span>
+            </div>
+            <div class="rgsp-body">
+                <p class="rgsp-desc">
+                    ${(() => {
+                        const f = candidates.length, e = totalEpCount;
+                        const fLabel = `<strong>${f}</strong> file${f > 1 ? "s" : ""}`;
+                        const eLabel = e !== f ? ` (<strong>${e}</strong> episode${e > 1 ? "s" : ""})` : "";
+                        return `${fLabel}${eLabel} have no Audio in Release Group.`;
+                    })()}
+                    Click a file row to edit its values, or edit here to apply to all checked files.
+                </p>
+                <div class="rgsp-section-lbl">
+                    Release Group
+                    <span class="rgsp-edit-target-bar" style="display:inline-flex;margin-left:8px">
+                        — editing: <span id="rgsp-edit-target-val" class="rgsp-edit-target-val">All files</span>
+                    </span>
+                </div>
+                <div class="rgsp-picker-box" id="rgsp-picker-box"></div>
+                <div class="rgsp-section-lbl">Preview</div>
+                <div id="rgsp-preview" class="ep-pop-preview empty" style="margin-bottom:10px">—</div>
+                ${hdtvFiles.length > 0 ? `
+                <div class="rgsp-section-lbl">Quality fix</div>
+                <label class="rgsp-quality-row">
+                    <input type="checkbox" class="rgsp-quality-chk" id="rgsp-q-fix" checked>
+                    <span class="rgsp-quality-txt">
+                        <span class="rgsp-quality-label">Fix HDTV → WEBDL for ${hdtvFiles.length} file${hdtvFiles.length > 1 ? "s" : ""}</span>
+                        <span class="rgsp-quality-detail">e.g. HDTV-1080p → WEBDL-1080p</span>
+                    </span>
+                </label>` : ""}
+                <div class="rgsp-section-lbl">Rename option</div>
+                <label class="rgsp-quality-row" style="margin-bottom:0">
+                    <input type="checkbox" class="rgsp-quality-chk" id="rgsp-rename-now"
+                        ${renameNowDefault ? "checked" : ""}>
+                    <span class="rgsp-quality-txt">
+                        <span class="rgsp-quality-label">Rename files immediately after applying</span>
+                        <span class="rgsp-quality-detail">Uncheck to show rename confirmation popup first</span>
+                    </span>
+                </label>
+                <div class="rgsp-section-lbl">Files (${candidates.length})
+                    <span style="font-size:10px;color:#567;font-weight:normal;margin-left:6px">
+                        — click a row to edit its Release Group
+                    </span>
+                </div>
+                <div class="rfp-tree" id="rgsp-tree"></div>
+                <div class="rgsp-status" id="rgsp-status"></div>
+            </div>
+            <div class="rgsp-footer">
+                <button class="rgsp-btn rgsp-cancel" id="rgsp-cancel">Dismiss</button>
+                <button class="rgsp-btn rgsp-apply" id="rgsp-apply" disabled>Apply (0)</button>
+            </div>`;
+        document.body.appendChild(panel);
+        requestAnimationFrame(() => panel.classList.add("open"));
+
+        // ── Picker ───────────────────────────────────────────────────────────
+        const pickerBox = panel.querySelector("#rgsp-picker-box");
+
+        const netLbl = document.createElement("div");
+        netLbl.className = "rgsp-picker-sub-lbl"; netLbl.textContent = "Network";
+        const netComp = makeMultiPills(NETWORKS, "net", [], syncPreview);
+
+        const edtLbl = document.createElement("div");
+        edtLbl.className = "rgsp-picker-sub-lbl"; edtLbl.textContent = "Edition";
+        const edtComp = makeMultiPills(EDITIONS, "edt", [], syncPreview);
+
+        const langLbl = document.createElement("div");
+        langLbl.className = "rgsp-picker-sub-lbl"; langLbl.textContent = "Language";
+        const dual = document.createElement("div"); dual.className = "rg-dual";
+        const audioComp = makeLangPicker("Audio",    bestSugg.audioCodes, syncPreview);
+        const subComp   = makeLangPicker("Subtitle", bestSugg.subCodes,   syncPreview);
+        dual.append(audioComp.el, subComp.el);
+
+        pickerBox.append(netLbl, netComp.el, edtLbl, edtComp.el, langLbl, dual);
+
+        const preview = panel.querySelector("#rgsp-preview");
+        // ── File tree — declared BEFORE syncPreview() to avoid TDZ error ─────
+        const tree = panel.querySelector("#rgsp-tree");
+
+        // ── Per-file editable values, initialized from each file's suggestion ─
+        // Maps fileId → { audioCodes, subCodes, nets, edts }
+        const fileValues = new Map();
+        for (const c of candidates) {
+            fileValues.set(c.id, {
+                audioCodes: c.suggestion ? [...c.suggestion.audioCodes] : [],
+                subCodes:   c.suggestion ? [...c.suggestion.subCodes]   : [],
+                nets: [], edts: [],
+            });
+        }
+
+        // ── editTarget: null = "All files", or a specific candidate ──────────
+        let editTarget = null;
+
+        /** Load values for the given target into the picker (null = All files). */
+        function loadTarget(target) {
+            editTarget = target;
+            const lbl = panel.querySelector("#rgsp-edit-target-val");
+            if (lbl) lbl.textContent = target ? fmtEp(target.ep) : "All files";
+
+            // Highlight the focused row
+            tree.querySelectorAll(".rfp-ep-row").forEach(row =>
+                row.classList.toggle("rgsp-focused",
+                    !!target && row.dataset.fileId === String(target.id)));
+
+            const vals = target
+                ? fileValues.get(target.id)
+                : { audioCodes: bestSugg.audioCodes, subCodes: bestSugg.subCodes, nets: [], edts: [] };
+
+            netComp.set(vals.nets,        true);
+            edtComp.set(vals.edts,        true);
+            audioComp.set(vals.audioCodes, true);
+            subComp.set(vals.subCodes,     true);
+
+            // Update preview without writing back to fileValues
+            const val = buildValue(vals.nets, vals.edts, vals.audioCodes, vals.subCodes);
+            preview.textContent = val || "—";
+            preview.className = "ep-pop-preview" +
+                (!val ? " empty" : vals.nets.length || vals.edts.length ? " has-network" : "");
+        }
+
+        /** Called whenever the picker changes — saves to fileValues and updates rows. */
+        function syncPreview() {
+            const nets = netComp.get(), edts = edtComp.get();
+            const audio = audioComp.get(), sub = subComp.get();
+            const val = buildValue(nets, edts, audio, sub);
+
+            preview.textContent = val || "—";
+            preview.className = "ep-pop-preview" +
+                (!val ? " empty" : nets.length || edts.length ? " has-network" : "");
+
+            const newVals = { audioCodes: audio, subCodes: sub, nets, edts };
+
+            if (editTarget) {
+                // Save only to the focused file
+                fileValues.set(editTarget.id, newVals);
+                const span = tree.querySelector(`.rgsp-new-rg[data-file-id="${editTarget.id}"]`);
+                if (span) span.textContent = val || "—";
+            } else {
+                // Save to all checked files and update their rows
+                for (const c of candidates) {
+                    if (checked.has(c.id)) fileValues.set(c.id, { ...newVals });
+                }
+                tree.querySelectorAll(".rgsp-new-rg[data-file-id]").forEach(el => {
+                    if (checked.has(parseInt(el.dataset.fileId))) el.textContent = val || "—";
+                });
+            }
+            updateApplyBtn();
+        }
+
+        // Quality fix checkbox: toggle badge visibility in tree
+        const qFixChk = panel.querySelector("#rgsp-q-fix");
+        qFixChk?.addEventListener("change", () => {
+            const show = qFixChk.checked;
+            tree.querySelectorAll(".rgsp-quality-badge").forEach(el =>
+                el.style.display = show ? "" : "none");
+        });
+
+        function renderTree() {
+            tree.innerHTML = "";
+            for (const sn of seasons) {
+                const files = bySeason.get(sn);
+                const allC  = files.every(f => checked.has(f.id));
+                const someC = files.some(f => checked.has(f.id));
+                let expanded = true;
+
+                const block = document.createElement("div");
+                block.className = "rfp-season-block";
+
+                const head = document.createElement("div");
+                head.className = "rfp-season-head";
+                head.innerHTML = `
+                    <input type="checkbox" class="rfp-chk rfp-season-chk" data-sn="${sn}">
+                    <span class="rfp-season-label">
+                        Season ${sn} <em>(${files.length} file${files.length > 1 ? "s" : ""})</em>
+                    </span>
+                    <span class="rfp-toggle">▲</span>`;
+                block.appendChild(head);
+
+                const chk = head.querySelector(".rfp-season-chk");
+                chk.checked = allC; chk.indeterminate = someC && !allC;
+
+                const epList = document.createElement("div");
+                epList.className = "rfp-ep-list";
+
+                for (const c of files) {
+                    const row = document.createElement("div");
+                    row.className = "rfp-ep-row";
+                    row.dataset.fileId = c.id;
+                    const vals = fileValues.get(c.id);
+                    const suggStr = vals
+                        ? buildValue(vals.nets, vals.edts, vals.audioCodes, vals.subCodes)
+                        : "(no mediaInfo)";
+                    const qualFix = HDTV_FIX[c.quality?.quality?.id];
+
+                    // Row has checkbox + clickable edit area
+                    row.innerHTML = `
+                        <input type="checkbox" class="rfp-chk rfp-ep-chk" data-id="${c.id}"
+                            ${checked.has(c.id) ? "checked" : ""}>
+                        <div class="rfp-ep-edit-area" title="Click to edit this file's Release Group">
+                            <span class="rfp-ep-label">${fmtEp(c.ep)}</span>
+                            <span class="rfp-old">${c.releaseGroup || "(none)"}</span>
+                            <span class="rfp-arrow">→</span>
+                            <span class="rfp-new rgsp-new-rg" data-file-id="${c.id}" style="color:#fa0">${suggStr}</span>
+                            ${qualFix ? `<span class="rgsp-quality-badge" style="font-size:10px;color:#b80;opacity:.8">🎬${c.quality.quality.name}→${qualFix.name}</span>` : ""}
+                        </div>`;
+                    epList.appendChild(row);
+
+                    // Click on the edit area → focus this file in the picker
+                    row.querySelector(".rfp-ep-edit-area").addEventListener("click", () => {
+                        if (editTarget?.id === c.id) {
+                            loadTarget(null); // toggle off — back to All
+                        } else {
+                            loadTarget(c);
+                        }
+                    });
+                }
+                block.appendChild(epList);
+                tree.appendChild(block);
+
+                // Toggle expand/collapse
+                const toggle = head.querySelector(".rfp-toggle");
+                const label  = head.querySelector(".rfp-season-label");
+                [toggle, label].forEach(el => el.addEventListener("click", () => {
+                    expanded = !expanded;
+                    epList.style.display = expanded ? "block" : "none";
+                    toggle.textContent = expanded ? "▲" : "▼";
+                }));
+
+                // Season checkbox
+                chk.addEventListener("change", () => {
+                    files.forEach(f => chk.checked ? checked.add(f.id) : checked.delete(f.id));
+                    epList.querySelectorAll(".rfp-ep-chk").forEach(ec => ec.checked = chk.checked);
+                    updateApplyBtn();
+                });
+
+                // Episode checkboxes
+                epList.querySelectorAll(".rfp-ep-chk").forEach(ec => {
+                    ec.addEventListener("change", () => {
+                        const id = parseInt(ec.dataset.id);
+                        ec.checked ? checked.add(id) : checked.delete(id);
+                        const allC2  = files.every(f => checked.has(f.id));
+                        const someC2 = files.some(f => checked.has(f.id));
+                        chk.checked = allC2; chk.indeterminate = someC2 && !allC2;
+                        updateApplyBtn();
+                    });
+                });
+            }
+        }
+        renderTree();
+        // Initialize picker to "All files" view showing bestSugg values
+        loadTarget(null);
+
+        function updateApplyBtn() {
+            const btn = panel.querySelector("#rgsp-apply");
+            if (!btn) return;
+            const renameNow = panel.querySelector("#rgsp-rename-now")?.checked ?? true;
+            const label = renameNow ? "Apply & Rename" : "Apply RG only";
+            btn.disabled = checked.size === 0;
+            btn.textContent = `${label} (${checked.size})`;
+        }
+        updateApplyBtn();
+
+        // Rename checkbox: update button label and persist preference
+        panel.querySelector("#rgsp-rename-now")?.addEventListener("change", e => {
+            GM_setValue("rgsp_rename_now", e.target.checked);
+            updateApplyBtn();
+        });
+
+        // ── Event handlers ───────────────────────────────────────────────────
+        panel.querySelector(".rgsp-close").addEventListener("click",  () => panel.classList.remove("open"));
+        panel.querySelector("#rgsp-cancel").addEventListener("click", () => panel.classList.remove("open"));
+        panel.querySelector("#rgsp-apply").addEventListener("click", () => {
+            const applyQFix = panel.querySelector("#rgsp-q-fix")?.checked ?? false;
+            const renameNow = panel.querySelector("#rgsp-rename-now")?.checked ?? true;
+            const selected  = candidates.filter(c => checked.has(c.id));
+            // Determine whether any file will have a network/edition prefix
+            const hasPrefix = selected.some(c => {
+                const fv = fileValues.get(c.id);
+                return fv && (fv.nets.length > 0 || fv.edts.length > 0);
+            });
+            executeRGSuggestion(series, selected, { fileValues, applyQFix, renameNow, hasPrefix }, panel);
+        });
+    }
+
+    /**
+     * Apply Release Group suggestions to selected files.
+     *
+     * opts = {
+     *   fileValues: Map<fileId, {audioCodes, subCodes, nets, edts}>
+     *   applyQFix:  boolean  — fix HDTV → WEBDL quality
+     *   renameNow:  boolean  — trigger rename immediately; if false, show popup
+     *   hasPrefix:  boolean  — any file has Network/Edition → run strip check after rename
+     * }
+     */
+    async function executeRGSuggestion(series, selected, opts, panel) {
+        if (!selected.length) return;
+
+        const applyBtn  = panel.querySelector("#rgsp-apply");
+        const cancelBtn = panel.querySelector("#rgsp-cancel");
+        applyBtn.disabled = cancelBtn.disabled = true;
+
+        const rgspSt = (msg, type) => {
+            const el = panel.querySelector("#rgsp-status");
+            if (el) { el.textContent = msg; el.className = `rgsp-status ${type}`; }
+        };
+
+        try {
+            // ── Step 1: PUT each file's Release Group ─────────────────────────
+            for (let i = 0; i < selected.length; i++) {
+                const f = selected[i];
+                rgspSt(`Updating ${i + 1} / ${selected.length}…`, "loading");
+
+                // Determine the RG for this specific file from its individual fileValues
+                const fv = opts.fileValues.get(f.id);
+                const fileRG = fv
+                    ? buildValue(fv.nets, fv.edts, fv.audioCodes, fv.subCodes)
+                    : buildValue([], [], f.suggestion?.audioCodes ?? [], f.suggestion?.subCodes ?? []);
+
+                const update = { ...f, releaseGroup: fileRG };
+
+                // Quality fix if requested and applicable
+                if (opts.applyQFix && HDTV_FIX[f.quality?.quality?.id]) {
+                    const fix = HDTV_FIX[f.quality.quality.id];
+                    update.quality = {
+                        ...f.quality,
+                        quality: { ...f.quality.quality, id: fix.id, name: fix.name },
+                    };
+                }
+
+                await apiReq("PUT", `/api/v3/episodefile/${f.id}`, update);
+
+                // Update local cache
+                if (_spData) {
+                    const idx = _spData.files.findIndex(x => x.id === f.id);
+                    if (idx !== -1) _spData.files[idx] = { ..._spData.files[idx], releaseGroup: fileRG };
+                }
+            }
+
+            rgspSt(`All ${selected.length} updated. Waiting for Sonarr…`, "loading");
+            await new Promise(r => setTimeout(r, 600));
+
+            document.getElementById("rg-suggest-btn")?.classList.remove("has-suggestions");
+
+            if (opts.renameNow) {
+                // ── Step 2a: Rename immediately ───────────────────────────────
+                rgspSt("Renaming files…", "loading");
+                const cmd = await apiReq("POST", "/api/v3/command", {
+                    name: "RenameFiles",
+                    seriesId: series.id,
+                    files: selected.map(f => f.id),
+                });
+                // Poll until Sonarr actually finishes renaming (not just queued)
+                await waitForCommand(cmd.id, st => rgspSt(`Renaming… (${st})`, "loading"));
+                rgspSt(`✓ Done — ${selected.length} file(s) updated & renamed.`, "ok");
+                setTimeout(async () => {
+                    panel.classList.remove("open");
+                    // If Network/Edition prefix was applied, check for strip
+                    if (opts.hasPrefix && _spData?.series) {
+                        await recheckPrefixFiles();
+                    }
+                }, 1500);
+            } else {
+                // ── Step 2b: Show rename confirmation popup ────────────────────
+                rgspSt(`✓ ${selected.length} RG(s) updated — confirm rename below.`, "ok");
+
+                // Post-rename callback: check strip if prefix was applied
+                const afterRename = opts.hasPrefix
+                    ? () => recheckPrefixFiles()
+                    : null;
+
+                setTimeout(() => {
+                    panel.classList.remove("open");
+                    if (_spData?.series) checkRenameMismatch(_spData.series, null, afterRename);
+                }, 1500);
+            }
+
+        } catch (e) {
+            rgspSt(`✗ ${e.message}`, "err");
+            applyBtn.disabled = cancelBtn.disabled = false;
+        }
     }
 
     async function checkSeriesPage() {
-        document.getElementById("rg-fix-fab")?.remove();
         document.getElementById("rg-fix-panel")?.remove();
+        document.getElementById("rg-sugg-panel")?.remove();
         document.getElementById("rg-rename-notif")?.remove();
         _spData = null;
         document.getElementById("rg-check-btn")?.classList.remove("visible");
         document.getElementById("rg-strip-btn")?.classList.remove("visible");
+        document.getElementById("rg-suggest-btn")?.classList.remove("visible", "has-suggestions");
 
         const m = location.pathname.match(/^\/series\/([^/]+)/);
         if (!m) return;
@@ -1868,33 +2630,61 @@
                 apiReq("GET", `/api/v3/episode?seriesId=${series.id}`),
             ]);
 
-            const epMap = new Map(
-                episodes.filter(e => e.episodeFileId).map(e => [e.episodeFileId, e])
-            );
+            // Build epMap: fileId → episode[] (sorted by season+ep)
+            // Multi-episode files (e.g. S01E117-E119) share the same episodeFileId;
+            // using an array keeps all episodes so we can display ranges correctly.
+            const epMap = new Map();
+            episodes.filter(e => e.episodeFileId).forEach(e => {
+                const arr = epMap.get(e.episodeFileId);
+                if (arr) arr.push(e);
+                else epMap.set(e.episodeFileId, [e]);
+            });
+            epMap.forEach(arr => arr.sort((a, b) =>
+                a.seasonNumber !== b.seasonNumber
+                    ? a.seasonNumber - b.seasonNumber
+                    : a.episodeNumber - b.episodeNumber));
 
             // Cache data for per-episode edit buttons
             _spData = { series, files, epMap };
             document.getElementById("rg-check-btn")?.classList.add("visible");
             document.getElementById("rg-strip-btn")?.classList.add("visible");
+            document.getElementById("rg-suggest-btn")?.classList.add("visible");
             injectEpEditBtns();
 
             const affected = files
                 .filter(f => prefixAlreadyInFilename(f))
                 .map(f => ({
                     ...f,
-                    ep: epMap.get(f.id) ?? null,
+                    ep: epMap.get(f.id) ?? [],
                     newReleaseGroup: (f.releaseGroup || "").replace(RG_PREFIX_RE, ""),
                 }))
                 .sort((a, b) => {
-                    const ds = (a.ep?.seasonNumber ?? 0) - (b.ep?.seasonNumber ?? 0);
-                    return ds !== 0 ? ds : (a.ep?.episodeNumber ?? 0) - (b.ep?.episodeNumber ?? 0);
+                    const ae = firstEp(a.ep), be = firstEp(b.ep);
+                    const ds = (ae?.seasonNumber ?? 0) - (be?.seasonNumber ?? 0);
+                    return ds !== 0 ? ds : (ae?.episodeNumber ?? 0) - (be?.episodeNumber ?? 0);
                 });
+
+            // ── RG Suggestion: compute BEFORE prefix-fix check so we can suppress
+            //    the rename notification when the suggestion panel is going to open.
+            const suggCandidates = _buildSuggCandidates(files, epMap, series);
 
             if (affected.length > 0) {
                 buildFixUI(series, affected);
-            } else {
-                // No prefix-fix files — show general rename notification if any files mismatch
+            } else if (suggCandidates.length === 0) {
+                // No prefix-fix AND no suggestion candidates →
+                // show rename notification if anything needs renaming
                 checkRenameMismatch(series);
+            }
+            // When suggestion panel is open, rename notification is suppressed here;
+            // it will be shown automatically after the user applies the suggestion.
+
+            if (suggCandidates.length > 0) {
+                const suggBtn = document.getElementById("rg-suggest-btn");
+                if (suggBtn) {
+                    suggBtn.classList.add("has-suggestions");
+                    suggBtn.title = `${suggCandidates.length} file(s) may need Release Group — click to suggest`;
+                }
+                buildRGSuggestionUI(series, suggCandidates);
             }
 
         } catch (e) { console.warn("[RG Fix]", e.message); }
@@ -1903,13 +2693,15 @@
     // ── Build the confirmation panel with season/episode tree ──────────────
 
     function buildFixUI(series, affected) {
+        document.getElementById("rg-fix-panel")?.remove();
+
         const prefixes = [...new Set(affected.map(f => (f.releaseGroup.match(RG_PREFIX_RE) || [""])[0]))];
         const prefixLabel = prefixes.join(", ");
 
         // Group by season
         const bySeason = new Map();
         for (const f of affected) {
-            const sn = f.ep?.seasonNumber ?? 0;
+            const sn = firstEp(f.ep)?.seasonNumber ?? 0;
             if (!bySeason.has(sn)) bySeason.set(sn, []);
             bySeason.get(sn).push(f);
         }
@@ -1918,19 +2710,10 @@
         // Selection state
         const checked = new Set(affected.map(f => f.id));
 
-        // FAB
-        const fab = document.createElement("div");
-        fab.id = "rg-fix-fab";
-        document.body.appendChild(fab);
-
         // Panel
         const panel = document.createElement("div");
         panel.id = "rg-fix-panel";
         document.body.appendChild(panel);
-
-        function renderFab() {
-            fab.innerHTML = `✂ Fix Release Group <span class="rfab-count">${checked.size}</span>`;
-        }
 
         function updateConfirmBtn() {
             const btn = panel.querySelector("#rfp-confirm");
@@ -1938,7 +2721,6 @@
                 btn.textContent = `✂ Strip & Rename (${checked.size})`;
                 btn.disabled = checked.size === 0;
             }
-            renderFab();
         }
 
         function setSeasonCheckState(sn) {
@@ -2034,6 +2816,8 @@
             }
         }
 
+        const stripNowDefault = GM_getValue("rfp_strip_now", false);
+
         // Build panel HTML skeleton
         panel.innerHTML = `
             <div class="rfp-head">
@@ -2045,6 +2829,15 @@
                     Strip <code>${prefixLabel}</code> from selected files, then rename.
                 </p>
                 <div class="rfp-tree" id="rfp-tree"></div>
+                <div class="rgsp-section-lbl" style="margin-top:8px">Strip option</div>
+                <label class="rgsp-quality-row" style="margin-bottom:0">
+                    <input type="checkbox" class="rgsp-quality-chk" id="rfp-strip-now"
+                        ${stripNowDefault ? "checked" : ""}>
+                    <span class="rgsp-quality-txt">
+                        <span class="rgsp-quality-label">Strip & Rename immediately when opened</span>
+                        <span class="rgsp-quality-detail">Uncheck to review and confirm manually</span>
+                    </span>
+                </label>
                 <div class="rfp-status" id="rfp-status"></div>
                 <div class="rfp-btns">
                     <button class="rfp-btn rfp-cancel" id="rfp-cancel">Cancel</button>
@@ -2061,8 +2854,20 @@
             executeGroupFix(series, affected.filter(f => checked.has(f.id)));
         });
 
-        fab.addEventListener("click", () => panel.classList.toggle("open"));
-        renderFab();
+        // Persist strip-now preference
+        panel.querySelector("#rfp-strip-now").addEventListener("change", e => {
+            GM_setValue("rfp_strip_now", e.target.checked);
+        });
+
+        // Always open the panel immediately
+        requestAnimationFrame(() => panel.classList.add("open"));
+
+        // If "strip immediately" is enabled, fire the strip command automatically
+        if (stripNowDefault) {
+            setTimeout(() => {
+                executeGroupFix(series, affected.filter(f => checked.has(f.id)));
+            }, 800);
+        }
     }
 
     // ── Execute: all PUTs first, then rename ──────────────────────────────
@@ -2097,18 +2902,19 @@
 
             // ── Step 3: Trigger rename ────────────────────────────────────
             rfpStatus("Renaming files…", "loading");
-            await apiReq("POST", "/api/v3/command", {
+            const cmd = await apiReq("POST", "/api/v3/command", {
                 name: "RenameFiles",
                 seriesId: series.id,
                 files: selectedFiles.map(f => f.id),
             });
+            // Poll until Sonarr actually finishes renaming
+            await waitForCommand(cmd.id, st => rfpStatus(`Renaming… (${st})`, "loading"));
 
             rfpStatus(`✓ Done — ${selectedFiles.length} file(s) renamed.`, "ok");
             // Close UI; injectEpEditBtns will auto-refetch when React re-renders new paths.
             setTimeout(() => {
-                document.getElementById("rg-fix-fab")?.remove();
                 document.getElementById("rg-fix-panel")?.remove();
-            }, 2500);
+            }, 1500);
 
         } catch (e) {
             rfpStatus(`✗ ${e.message}`, "err");
@@ -2123,8 +2929,9 @@
                 clearTimeout(watchNavigation._t);
                 watchNavigation._t = setTimeout(checkSeriesPage, 600);
             } else {
-                document.getElementById("rg-fix-fab")?.remove();
                 document.getElementById("rg-fix-panel")?.remove();
+                document.getElementById("rg-sugg-panel")?.remove();
+                document.getElementById("rg-suggest-btn")?.classList.remove("visible", "has-suggestions");
             }
         };
         const orig = history.pushState;
