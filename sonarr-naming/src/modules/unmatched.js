@@ -12,7 +12,6 @@ function fmtSize(bytes) {
     return Math.round(bytes / 1e3) + " KB";
 }
 
-/** Split a path into { filename, folder } */
 function splitPath(p) {
     if (!p) return { filename: "(unknown)", folder: "" };
     const norm = p.replace(/\\/g, "/");
@@ -21,36 +20,45 @@ function splitPath(p) {
     return { filename: norm.slice(idx + 1), folder: norm.slice(0, idx) };
 }
 
-/** Detect Plex-style multi-part filenames: -part1, -part2, Part 3, pt2 … */
+/** Detect files that already have -part\d+ / part N in their name */
 function isMultiPart(filename) {
     return /-part\d+/i.test(filename) || /\bpart\s*\d+\b/i.test(filename);
 }
 
-/** Extract part number from filename, e.g. "-part2" → 2 */
 function extractPartNum(filename) {
     const m = filename.match(/-?part\s*(\d+)/i);
     return m ? parseInt(m[1]) : null;
 }
 
-/** Extract SxxExx from filename → { sn, ep } or null */
 function parseSeasonEp(filename) {
     const m = filename.match(/S(\d+)E(\d+)/i);
     return m ? { sn: parseInt(m[1]), ep: parseInt(m[2]) } : null;
 }
 
 /**
- * Given a multi-part item, find the Sonarr-imported file for the same episode
- * and derive the suggested rename target: "[imported basename] - ptN.ext"
- *
- * Returns { current, suggested, importedPath } or null when not computable.
+ * Given an imported Sonarr file + part number → target filename.
+ * e.g.  "Series - S01E04 - Title [HDTV] {RG}.mkv" + 2  →
+ *        "Series - S01E04 - Title [HDTV] {RG} - pt2.mkv"
  */
-function buildRenameSuggestion(item, files, epMap) {
+function computeTargetName(importedFile, partNum) {
+    const { filename } = splitPath(importedFile.relativePath ?? "");
+    if (!filename) return null;
+    const dot  = filename.lastIndexOf(".");
+    const base = dot >= 0 ? filename.slice(0, dot) : filename;
+    const ext  = dot >= 0 ? filename.slice(dot)    : ".mkv";
+    return `${base} - pt${partNum}${ext}`;
+}
+
+/**
+ * For a detected multi-part file (already has -partN):
+ * look up the Sonarr-imported file for the same SxxExx and build rename target.
+ */
+function buildDetectedRename(item, files, epMap) {
     const { filename } = splitPath(item.relativePath ?? item.path ?? "");
     const parsed = parseSeasonEp(filename);
     const partN  = extractPartNum(filename);
     if (!parsed || !partN) return null;
 
-    // Find the file Sonarr has imported for this season+episode
     let importedFile = null;
     for (const [fileId, episodes] of epMap) {
         if (episodes.some(e => e.seasonNumber === parsed.sn && e.episodeNumber === parsed.ep)) {
@@ -60,25 +68,39 @@ function buildRenameSuggestion(item, files, epMap) {
     }
     if (!importedFile) return null;
 
-    const { filename: importedName } = splitPath(importedFile.relativePath ?? "");
-    if (!importedName) return null;
+    const target = computeTargetName(importedFile, partN);
+    return target ? { suggested: target } : null;
+}
 
-    const dot  = importedName.lastIndexOf(".");
-    const base = dot >= 0 ? importedName.slice(0, dot) : importedName;
-    const ext  = dot >= 0 ? importedName.slice(dot)    : ".mkv";
-
-    return {
-        current:      filename,
-        suggested:    `${base} - pt${partN}${ext}`,
-        importedPath: importedFile.relativePath ?? "",
-    };
+/**
+ * Build sorted episode options for the pairing dropdown.
+ * Source: epMap (fileId → episode[]) + files array.
+ */
+function buildEpisodeOptions(files, epMap) {
+    const opts = [];
+    for (const [fileId, episodes] of epMap) {
+        const file = files.find(f => f.id === fileId);
+        if (!file) continue;
+        const ep = episodes[0];
+        opts.push({
+            fileId,
+            sn: ep.seasonNumber,
+            ep: ep.episodeNumber,
+            label: `S${String(ep.seasonNumber).padStart(2,"0")}` +
+                   `E${String(ep.episodeNumber).padStart(2,"0")}` +
+                   (ep.title ? ` — ${ep.title}` : ""),
+            file,
+        });
+    }
+    opts.sort((a, b) => a.sn !== b.sn ? a.sn - b.sn : a.ep - b.ep);
+    return opts;
 }
 
 // ── API ───────────────────────────────────────────────────────────────────────
 
 /**
- * Call Sonarr's manual-import endpoint to find files not yet imported.
- * Button appears only for genuinely unrecognised files (no episode match, not multi-part).
+ * Check the series folder for files not yet imported.
+ * Button shows when ANY file has no episode match (detected multi-part counts too).
  */
 export async function checkUnmatchedFiles() {
     const _spData = getSpData();
@@ -97,16 +119,13 @@ export async function checkUnmatchedFiles() {
         _spData.unmatchedFiles = items;
         if (!btn) return;
 
-        const problemCount = items.filter(i => {
-            if (i.episodes?.length > 0) return false;
-            const { filename } = splitPath(i.relativePath ?? i.path);
-            return !isMultiPart(filename);
-        }).length;
+        // Count ALL files with no episode match — includes detected multi-part
+        const noEpMatchCount = items.filter(i => !(i.episodes?.length > 0)).length;
 
-        if (problemCount > 0) {
+        if (noEpMatchCount > 0) {
             btn.classList.add("visible", "has-unmatched");
-            btn.dataset.count = problemCount;
-            btn.title = `${problemCount} unrecognised file${problemCount > 1 ? "s" : ""} in series folder`;
+            btn.dataset.count = noEpMatchCount;
+            btn.title = `${noEpMatchCount} file${noEpMatchCount > 1 ? "s" : ""} with no episode match`;
         } else {
             btn.classList.remove("visible", "has-unmatched");
             delete btn.dataset.count;
@@ -116,122 +135,172 @@ export async function checkUnmatchedFiles() {
     }
 }
 
-// ── Panel ─────────────────────────────────────────────────────────────────────
+// ── Card builders ─────────────────────────────────────────────────────────────
 
-function buildFileRow(item, badgeHtml, renameSugg) {
-    const { filename, folder } = splitPath(item.relativePath ?? item.path);
-    const size       = fmtSize(item.size);
-    const quality    = item.quality?.quality?.name ?? "";
-    const rejections = (item.rejections ?? []).filter(r => r.reason !== "Already imported");
-
-    const chips = [
+function chipRow(item) {
+    const size    = fmtSize(item.size);
+    const quality = item.quality?.quality?.name ?? "";
+    return [
         size    ? `<span class="unm-chip unm-chip-size">${size}</span>`       : "",
         quality ? `<span class="unm-chip unm-chip-quality">${quality}</span>` : "",
     ].filter(Boolean).join("");
+}
 
-    const rejLines = rejections.length
-        ? rejections.map(r => `<div class="unm-rejection">⚠ ${r.reason}</div>`).join("")
-        : "";
+function copyBtn(text, title = "Copy filename") {
+    return `<button class="unm-copy-btn" data-copy="${text.replace(/"/g, "&quot;")}" title="${title}">📋</button>`;
+}
 
-    // Rename suggestion block (multi-part only)
-    let renameBlock = "";
-    if (renameSugg) {
-        renameBlock = `
-            <div class="unm-rename">
-                <div class="unm-rename-lbl">Rename to:</div>
-                <div class="unm-rename-row">
-                    <span class="unm-rename-target" title="${renameSugg.suggested}">${renameSugg.suggested}</span>
-                    <button class="unm-copy-btn" data-copy="${renameSugg.suggested}" title="Copy filename">📋</button>
-                </div>
-            </div>`;
-    } else if (item._isMultiPart) {
-        // multi-part but episode not imported yet
-        renameBlock = `
-            <div class="unm-rename unm-rename--unknown">
-                Episode not yet imported by Sonarr — rename suggestion unavailable
-            </div>`;
-    }
+/** Card: unmatched file with pairing UI (user assigns episode + part number) */
+function buildUnmatchedCard(item, episodeOptions) {
+    const { filename, folder } = splitPath(item.relativePath ?? item.path);
+    const chips = chipRow(item);
+
+    const epOpts = episodeOptions.map(o =>
+        `<option value="${o.fileId}">${o.label}</option>`
+    ).join("");
 
     return `
-        <div class="unm-file">
+        <div class="unm-file unm-file--pairable">
             <div class="unm-filename">${filename}</div>
             ${folder ? `<div class="unm-folder">${folder}</div>` : ""}
             <div class="unm-row2">
                 <div class="unm-chips">${chips}</div>
-                <div class="unm-eps">${badgeHtml}</div>
+                <div class="unm-eps"><span class="unm-ep-badge unm-ep-none">No episode match</span></div>
+            </div>
+            <div class="unm-pair-wrap">
+                <button class="unm-pair-toggle">📼 Identify as multi-part</button>
+                <div class="unm-pair-form">
+                    <div class="unm-pair-field">
+                        <span class="unm-pair-lbl">Part of episode:</span>
+                        <select class="unm-pair-ep">
+                            <option value="">— select —</option>
+                            ${epOpts}
+                        </select>
+                    </div>
+                    <div class="unm-pair-field">
+                        <span class="unm-pair-lbl">Part number:</span>
+                        <div class="unm-part-pills">
+                            <button class="unm-part-pill" data-part="2">pt2</button>
+                            <button class="unm-part-pill" data-part="3">pt3</button>
+                            <button class="unm-part-pill" data-part="4">pt4</button>
+                            <button class="unm-part-pill" data-part="5">pt5</button>
+                        </div>
+                    </div>
+                    <div class="unm-rename unm-rename--hidden">
+                        <div class="unm-rename-lbl">Rename to:</div>
+                        <div class="unm-rename-row">
+                            <span class="unm-rename-target"></span>
+                            <button class="unm-copy-btn" title="Copy filename">📋</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+}
+
+/** Card: detected multi-part (has -partN in filename) — show rename suggestion */
+function buildDetectedCard(item, renameSugg) {
+    const { filename, folder } = splitPath(item.relativePath ?? item.path);
+    const chips = chipRow(item);
+    const m = filename.match(/-?(part\s*\d+)/i);
+    const partLabel = m ? m[1].replace(/\s+/, "") : "multi-part";
+
+    const renameBlock = renameSugg
+        ? `<div class="unm-rename">
+               <div class="unm-rename-lbl">Rename to:</div>
+               <div class="unm-rename-row">
+                   <span class="unm-rename-target">${renameSugg.suggested}</span>
+                   ${copyBtn(renameSugg.suggested)}
+               </div>
+           </div>`
+        : `<div class="unm-rename unm-rename--unknown">
+               Episode not yet imported — rename suggestion unavailable
+           </div>`;
+
+    return `
+        <div class="unm-file unm-file--detected-part">
+            <div class="unm-filename">${filename}</div>
+            ${folder ? `<div class="unm-folder">${folder}</div>` : ""}
+            <div class="unm-row2">
+                <div class="unm-chips">${chips}</div>
+                <div class="unm-eps"><span class="unm-ep-badge unm-ep-part">${partLabel}</span></div>
             </div>
             ${renameBlock}
-            ${rejLines}
         </div>`;
 }
 
-function buildSection(cls, label, fileItems, getBadge, getRenameSugg) {
-    if (!fileItems.length) return "";
-    return `
-        <div class="unm-section unm-section--${cls}">
-            <div class="unm-section-lbl">${label}</div>
-            <div class="unm-card-list">
-                ${fileItems.map(i => buildFileRow(i, getBadge(i), getRenameSugg?.(i) ?? null)).join("")}
-            </div>
-        </div>`;
-}
-
-/** Build and show the unmatched files slide-in panel. */
-export function showUnmatchedPanel() {
-    document.getElementById("rg-unmatched-panel")?.remove();
-
-    const _spData = getSpData();
-    const items   = _spData?.unmatchedFiles ?? [];
-    const files   = _spData?.files   ?? [];
-    const epMap   = _spData?.epMap   ?? new Map();
-
-    const panel = document.createElement("div");
-    panel.id = "rg-unmatched-panel";
-
-    // Classify into 3 groups
-    const problem   = [];
-    const multiPart = [];
-    const pending   = [];
-
-    for (const item of items) {
-        const { filename } = splitPath(item.relativePath ?? item.path);
-        if (item.episodes?.length > 0) {
-            pending.push(item);
-        } else if (isMultiPart(filename)) {
-            item._isMultiPart = true;
-            multiPart.push(item);
-        } else {
-            problem.push(item);
-        }
-    }
-
-    const epBadge = item => item.episodes.map(e =>
+/** Card: episode matched but not yet imported by Sonarr */
+function buildPendingCard(item) {
+    const { filename, folder } = splitPath(item.relativePath ?? item.path);
+    const chips = chipRow(item);
+    const epBadges = (item.episodes ?? []).map(e =>
         `<span class="unm-ep-badge unm-ep-match">` +
         `S${String(e.seasonNumber).padStart(2,"0")}` +
         `E${String(e.episodeNumber).padStart(2,"0")}` +
         `</span>`
     ).join("");
+    return `
+        <div class="unm-file unm-file--pending">
+            <div class="unm-filename">${filename}</div>
+            ${folder ? `<div class="unm-folder">${folder}</div>` : ""}
+            <div class="unm-row2">
+                <div class="unm-chips">${chips}</div>
+                <div class="unm-eps">${epBadges}</div>
+            </div>
+        </div>`;
+}
 
-    const partBadge = item => {
+function buildSection(cls, label, cards) {
+    if (!cards.length) return "";
+    return `
+        <div class="unm-section unm-section--${cls}">
+            <div class="unm-section-lbl">${label}</div>
+            <div class="unm-card-list">${cards.join("")}</div>
+        </div>`;
+}
+
+// ── Panel ─────────────────────────────────────────────────────────────────────
+
+export function showUnmatchedPanel() {
+    document.getElementById("rg-unmatched-panel")?.remove();
+
+    const _spData = getSpData();
+    const items   = _spData?.unmatchedFiles ?? [];
+    const files   = _spData?.files  ?? [];
+    const epMap   = _spData?.epMap  ?? new Map();
+
+    const panel = document.createElement("div");
+    panel.id = "rg-unmatched-panel";
+
+    // Classify
+    const unmatched    = [];  // no ep match, no -part → needs pairing
+    const detectedPart = [];  // no ep match, has -part → rename suggestion
+    const pending      = [];  // has ep match → Sonarr will handle
+
+    for (const item of items) {
         const { filename } = splitPath(item.relativePath ?? item.path);
-        const m = filename.match(/-?(part\s*\d+)/i);
-        const label = m ? m[1].replace(/\s+/, "") : "multi-part";
-        return `<span class="unm-ep-badge unm-ep-part">${label}</span>`;
-    };
+        if (item.episodes?.length > 0)   pending.push(item);
+        else if (isMultiPart(filename))  detectedPart.push(item);
+        else                              unmatched.push(item);
+    }
+
+    const episodeOptions = buildEpisodeOptions(files, epMap);
+
+    const unmatchedCards    = unmatched.map(i => buildUnmatchedCard(i, episodeOptions));
+    const detectedPartCards = detectedPart.map(i => buildDetectedCard(i, buildDetectedRename(i, files, epMap)));
+    const pendingCards      = pending.map(i => buildPendingCard(i));
+
+    const headerDetail = [
+        unmatched.length    ? `<span class="unm-hcount unm-hcount--warn">${unmatched.length} unmatched</span>`    : "",
+        detectedPart.length ? `<span class="unm-hcount unm-hcount--part">${detectedPart.length} multi-part</span>` : "",
+        pending.length      ? `<span class="unm-hcount unm-hcount--ok">${pending.length} pending</span>`           : "",
+    ].filter(Boolean).join("");
 
     const body = items.length === 0
         ? `<p class="unm-empty">No unmatched files found in series folder.</p>`
-        : buildSection("problem", "⚠ Unrecognised — needs attention", problem,
-                () => `<span class="unm-ep-badge unm-ep-none">No episode match</span>`) +
-          buildSection("multipart", "📼 Multi-part — Plex sequential play", multiPart, partBadge,
-                item => buildRenameSuggestion(item, files, epMap)) +
-          buildSection("pending", "✓ Episode matched — pending Sonarr import", pending, epBadge);
-
-    const headerDetail = [
-        problem.length   ? `<span class="unm-hcount unm-hcount--warn">${problem.length} unrecognised</span>`   : "",
-        multiPart.length ? `<span class="unm-hcount unm-hcount--part">${multiPart.length} multi-part</span>`   : "",
-        pending.length   ? `<span class="unm-hcount unm-hcount--ok">${pending.length} pending import</span>`   : "",
-    ].filter(Boolean).join("");
+        : buildSection("problem",   "⚠ No episode match", unmatchedCards) +
+          buildSection("multipart", "📼 Multi-part detected", detectedPartCards) +
+          buildSection("pending",   "✓ Pending Sonarr import", pendingCards);
 
     panel.innerHTML = `
         <div class="rfp-head" style="color:#f80;border-bottom-color:#3a2000">
@@ -241,9 +310,9 @@ export function showUnmatchedPanel() {
         <div class="rfp-body">
             ${headerDetail ? `<div class="unm-summary">${headerDetail}</div>` : ""}
             <p class="rfp-desc">
-                Files in the series folder that Sonarr hasn't imported yet.
-                Multi-part files are normal for Plex sequential-play.
-                Use the 📋 copy button to get the correct target filename for renaming in your file manager.
+                Files in the series folder that Sonarr hasn't imported.
+                Use <b>📼 Identify as multi-part</b> to pair a file with its episode
+                and get the correct Plex-compatible target filename.
             </p>
             <div class="unm-file-list">${body}</div>
         </div>
@@ -251,29 +320,86 @@ export function showUnmatchedPanel() {
             <button class="rfp-btn rfp-cancel" id="unm-close">Close</button>
         </div>`;
 
+    // Stash episode options for event handler access
+    panel._epOpts = episodeOptions;
+
     document.body.appendChild(panel);
     requestAnimationFrame(() => panel.classList.add("open"));
 
-    // Close buttons
+    // ── Close ─────────────────────────────────────────────────────────────────
     panel.querySelector(".rfp-head-close").addEventListener("click", () => panel.classList.remove("open"));
     panel.querySelector("#unm-close").addEventListener("click",      () => panel.classList.remove("open"));
 
-    // Copy-to-clipboard buttons
+    // ── Pairing preview update ────────────────────────────────────────────────
+    function updatePreview(card) {
+        const select     = card.querySelector(".unm-pair-ep");
+        const activePill = card.querySelector(".unm-part-pill.active");
+        const renameDiv  = card.querySelector(".unm-rename");
+        const targetSpan = card.querySelector(".unm-rename-target");
+        const btn        = card.querySelector(".unm-copy-btn");
+
+        const fileId = parseInt(select?.value);
+        const partN  = activePill ? parseInt(activePill.dataset.part) : null;
+
+        if (!fileId || !partN) {
+            renameDiv?.classList.add("unm-rename--hidden");
+            return;
+        }
+        const opt = panel._epOpts.find(o => o.fileId === fileId);
+        if (!opt) return;
+
+        const target = computeTargetName(opt.file, partN);
+        if (!target) return;
+
+        if (targetSpan) targetSpan.textContent = target;
+        if (btn)        btn.dataset.copy = target;
+        renameDiv?.classList.remove("unm-rename--hidden");
+    }
+
+    // ── Event delegation ──────────────────────────────────────────────────────
     panel.addEventListener("click", e => {
+        // Toggle pairing form
+        if (e.target.closest(".unm-pair-toggle")) {
+            const wrap = e.target.closest(".unm-pair-wrap");
+            wrap?.querySelector(".unm-pair-form")?.classList.toggle("open");
+            e.target.closest(".unm-pair-toggle")?.classList.toggle("active");
+            return;
+        }
+
+        // Part pill selection
+        const pill = e.target.closest(".unm-part-pill");
+        if (pill) {
+            pill.closest(".unm-part-pills")
+                .querySelectorAll(".unm-part-pill")
+                .forEach(p => p.classList.remove("active"));
+            pill.classList.add("active");
+            updatePreview(pill.closest(".unm-file"));
+            return;
+        }
+
+        // Copy to clipboard
         const btn = e.target.closest(".unm-copy-btn");
-        if (!btn) return;
-        const text = btn.dataset.copy;
-        navigator.clipboard.writeText(text).then(() => {
-            const orig = btn.textContent;
-            btn.textContent = "✓";
-            btn.classList.add("copied");
-            setTimeout(() => { btn.textContent = orig; btn.classList.remove("copied"); }, 1500);
-        }).catch(() => {
-            // Fallback: select the text node next to button
-            const range = document.createRange();
-            range.selectNode(btn.previousElementSibling);
-            window.getSelection()?.removeAllRanges();
-            window.getSelection()?.addRange(range);
-        });
+        if (btn?.dataset.copy) {
+            navigator.clipboard.writeText(btn.dataset.copy).then(() => {
+                const orig = btn.textContent;
+                btn.textContent = "✓";
+                btn.classList.add("copied");
+                setTimeout(() => { btn.textContent = orig; btn.classList.remove("copied"); }, 1500);
+            }).catch(() => {
+                // Fallback: select the text visually
+                try {
+                    const range = document.createRange();
+                    range.selectNode(btn.previousElementSibling ?? btn);
+                    window.getSelection()?.removeAllRanges();
+                    window.getSelection()?.addRange(range);
+                } catch (_) {}
+            });
+        }
+    });
+
+    panel.addEventListener("change", e => {
+        if (e.target.closest(".unm-pair-ep")) {
+            updatePreview(e.target.closest(".unm-file"));
+        }
     });
 }
