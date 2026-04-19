@@ -45,23 +45,40 @@ export function parseLangString(str) {
 }
 
 /**
- * Sort language codes by priority: TH → EN → originalCode → (others excluded).
- * Only the three "sanctioned" slots are kept; random extra languages are dropped.
+ * Sort AUDIO codes by priority: TH → EN → originalCode → (others excluded).
+ * The original language is included only when it is physically detected in the file.
+ * Random extra languages (e.g. Indonesian for a Korean series) are dropped.
  *
  * @param {string[]} codes        - deduplicated 2-letter codes from parseLangString
  * @param {string}   originalCode - 2-letter code of the series' original language
- *                                  (e.g. "KO" for Korean). Pass "" to keep legacy
- *                                  "include any 3" behaviour (backwards compat).
  */
 export function sortAudioCodes(codes, originalCode) {
     const PRIORITY = ["TH", "EN"];
     const result   = PRIORITY.filter(c => codes.includes(c));
-    // Add the series original language as 3rd slot only if it's available in the
-    // tracks AND it isn't already captured by the fixed priority list above.
+    // Add the series original language only when it is actually in the file's tracks.
     if (originalCode && !PRIORITY.includes(originalCode) && codes.includes(originalCode)) {
         result.push(originalCode);
     }
-    // No other languages are included — they are not part of our naming convention.
+    return result.slice(0, 3);
+}
+
+/**
+ * Sort SUBTITLE codes by priority: TH → EN → originalCode.
+ *
+ * Unlike audio, the original language is ALWAYS added as the 3rd slot when
+ * it is not TH or EN — because streaming platforms almost always include the
+ * original-language subtitle track, even if the MediaInfo scan missed it.
+ *
+ * @param {string[]} codes        - deduplicated 2-letter codes from parseLangString
+ * @param {string}   originalCode - 2-letter code of the series' original language
+ */
+export function sortSubCodes(codes, originalCode) {
+    const PRIORITY = ["TH", "EN"];
+    const result   = PRIORITY.filter(c => codes.includes(c));
+    // Always guarantee the original language slot (unless it's already TH or EN).
+    if (originalCode && !PRIORITY.includes(originalCode) && !result.includes(originalCode)) {
+        result.push(originalCode);
+    }
     return result.slice(0, 3);
 }
 
@@ -104,10 +121,11 @@ export function suggestRGFromFile(file, originalCode) {
         )];
     }
 
-    // Apply priority ordering: TH → EN → series original language (max 3)
-    // Random other languages (e.g. Indonesian for a Korean series) are excluded.
+    // Audio: TH → EN → originalCode (only when physically detected in file)
     audioCodes = sortAudioCodes(audioCodes, originalCode);
-    subCodes   = sortAudioCodes(subCodes,   originalCode);
+    // Subtitle: TH → EN → originalCode (always guaranteed — streaming platforms
+    // almost always include the original-language sub even if MediaInfo missed it)
+    subCodes   = sortSubCodes(subCodes, originalCode);
 
     if (!audioCodes.length && !subCodes.length) return null;
     return { audioCodes, subCodes };
