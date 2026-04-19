@@ -46,12 +46,16 @@ export async function checkUnmatchedFiles() {
 
         if (!btn) return;
 
-        if (items.length > 0) {
+        // Only alert when files have NO episode match — those need manual action.
+        // Files that are matched-but-not-yet-imported are handled by Sonarr automatically.
+        const noMatchCount = items.filter(i => !(i.episodes?.length > 0)).length;
+
+        if (noMatchCount > 0) {
             btn.classList.add("visible", "has-unmatched");
-            btn.dataset.count = items.length;
-            btn.title = `${items.length} unmatched file${items.length > 1 ? "s" : ""} in series folder`;
+            btn.dataset.count = noMatchCount;
+            btn.title = `${noMatchCount} file${noMatchCount > 1 ? "s" : ""} in folder with no episode match`;
         } else {
-            // No unmatched files → keep button hidden
+            // All files matched (or none at all) → keep button hidden
             btn.classList.remove("visible", "has-unmatched");
             delete btn.dataset.count;
         }
