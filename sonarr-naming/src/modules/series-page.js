@@ -142,9 +142,9 @@ export async function checkSeriesPage() {
         document.getElementById("rg-check-btn")?.classList.add("visible");
         document.getElementById("rg-strip-btn")?.classList.add("visible");
         document.getElementById("rg-suggest-btn")?.classList.add("visible");
-        document.getElementById("rg-unmatched-btn")?.classList.add("visible");
+        // rg-unmatched-btn is shown by checkUnmatchedFiles() only when files are found
         injectEpEditBtns();
-        checkUnmatchedFiles(); // fire-and-forget; updates badge when done
+        checkUnmatchedFiles(); // fire-and-forget; shows button + badge when files found
 
         const affected = files
             .filter(f => prefixAlreadyInFilename(f))

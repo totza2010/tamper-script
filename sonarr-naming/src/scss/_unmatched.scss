@@ -7,7 +7,7 @@
     width: 460px;
     height: 100vh;
     background: #12121e;
-    border-left: 1px solid #3a2a00;
+    border-left: 1px solid #3a2000;
     z-index: 10000;
     display: flex;
     flex-direction: column;
@@ -21,48 +21,115 @@
     &.open { right: 0; }
 }
 
+// ── Section grouping ──────────────────────────────────────────────────────────
+.unm-section { margin-bottom: 12px; }
+
+.unm-section-lbl {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    font-weight: bold;
+    margin-bottom: 6px;
+    padding-left: 2px;
+}
+
 // ── File list ─────────────────────────────────────────────────────────────────
 .unm-file-list {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 0;
 }
 
 .unm-file {
     background: #0d0d1e;
-    border: 1px solid #2a2a3a;
-    border-radius: 6px;
-    padding: 8px 10px;
+    border-left: 3px solid #2a6a3a;
+    border-bottom: 1px solid #1a1a2e;
+    padding: 9px 11px;
 
-    &.unm-unresolved { border-color: #4a2800; background: #110a00; }
+    // no match → orange accent
+    &.unm-unresolved {
+        border-left-color: #c05000;
+        background: #110800;
+    }
+
+    &:first-child { border-radius: 6px 6px 0 0; }
+    &:last-child  { border-radius: 0 0 6px 6px; border-bottom: none; }
+    &:only-child  { border-radius: 6px; border-bottom: none; }
 }
 
-.unm-path {
+// Filename — most important, large and clear
+.unm-filename {
     font-family: monospace;
-    font-size: 10px;
-    color: #aab;
+    font-size: 11.5px;
+    color: #dde;
     word-break: break-all;
-    margin-bottom: 4px;
+    line-height: 1.4;
+    margin-bottom: 2px;
 }
 
-.unm-meta {
+// Parent folder path — secondary, very small
+.unm-folder {
+    font-family: monospace;
+    font-size: 9.5px;
+    color: #456;
+    word-break: break-all;
+    margin-bottom: 6px;
+}
+
+// Row: chips (size/quality) on left, episode badges on right
+.unm-row2 {
     display: flex;
+    align-items: center;
     gap: 8px;
-    margin-bottom: 4px;
+    flex-wrap: wrap;
 }
 
-.unm-size    { font-size: 10px; color: #567; }
-.unm-quality { font-size: 10px; color: #7ad; }
+.unm-chips { display: flex; gap: 5px; flex-shrink: 0; }
 
-.unm-ep {
-    font-size: 11px;
-    color: #6d6;
+.unm-chip {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: bold;
 
-    &.unm-ep-unknown { color: #f80; }
+    &.unm-chip-size    { background: #1a1a2e; color: #567; border: 1px solid #2a2a40; }
+    &.unm-chip-quality { background: #0d1e2a; color: #5ad; border: 1px solid #1a3a50; }
 }
 
+.unm-eps { display: flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
+
+.unm-ep-badge {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 10px;
+    font-weight: bold;
+    background: #0d2010;
+    color: #5c5;
+    border: 1px solid #2a5a2a;
+
+    // no match pill
+    &.unm-ep-none {
+        background: #1e0e00;
+        color: #f80;
+        border-color: #5a2800;
+    }
+}
+
+// Rejection warnings
 .unm-rejection {
     font-size: 10px;
-    color: #d44;
-    margin-top: 2px;
+    color: #c44;
+    margin-top: 5px;
+    padding: 3px 7px;
+    background: #1a0808;
+    border-radius: 4px;
+    border: 1px solid #3a1010;
+}
+
+// Empty state
+.unm-empty {
+    color: #567;
+    font-size: 12px;
+    text-align: center;
+    padding: 20px 0;
 }

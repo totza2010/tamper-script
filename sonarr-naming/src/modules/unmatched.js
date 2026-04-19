@@ -12,10 +12,19 @@ function fmtSize(bytes) {
     return Math.round(bytes / 1e3) + " KB";
 }
 
+/** Split a relative/full path into { filename, folder } */
+function splitPath(p) {
+    if (!p) return { filename: "(unknown)", folder: "" };
+    const norm = p.replace(/\\/g, "/");
+    const idx  = norm.lastIndexOf("/");
+    if (idx < 0) return { filename: norm, folder: "" };
+    return { filename: norm.slice(idx + 1), folder: norm.slice(0, idx) };
+}
+
 /**
  * Call Sonarr's manual-import endpoint to find files that are in the
  * series folder but have NOT been imported as episode files yet.
- * Updates the 📁 button badge when unmatched files are found.
+ * Shows the 📁 button (with badge) only when unmatched files are found.
  */
 export async function checkUnmatchedFiles() {
     const _spData = getSpData();
@@ -35,16 +44,16 @@ export async function checkUnmatchedFiles() {
         // Store for panel use
         _spData.unmatchedFiles = items;
 
-        if (btn) {
-            if (items.length > 0) {
-                btn.classList.add("has-unmatched");
-                btn.dataset.count = items.length;
-                btn.title = `${items.length} unmatched file${items.length > 1 ? "s" : ""} found in series folder`;
-            } else {
-                btn.classList.remove("has-unmatched");
-                delete btn.dataset.count;
-                btn.title = "No unmatched files";
-            }
+        if (!btn) return;
+
+        if (items.length > 0) {
+            btn.classList.add("visible", "has-unmatched");
+            btn.dataset.count = items.length;
+            btn.title = `${items.length} unmatched file${items.length > 1 ? "s" : ""} in series folder`;
+        } else {
+            // No unmatched files → keep button hidden
+            btn.classList.remove("visible", "has-unmatched");
+            delete btn.dataset.count;
         }
     } catch (e) {
         console.warn("[RG Unmatched]", e.message);
@@ -61,56 +70,83 @@ export function showUnmatchedPanel() {
     const panel = document.createElement("div");
     panel.id = "rg-unmatched-panel";
 
-    const fileRows = items.length === 0
-        ? `<p style="color:#567;font-size:12px;text-align:center;padding:12px 0">
-               No unmatched files found in folder.
-           </p>`
-        : items.map(item => {
-            const relPath   = item.relativePath ?? item.path ?? "(unknown path)";
-            const size      = fmtSize(item.size);
-            const quality   = item.quality?.quality?.name ?? "";
-            const episodes  = item.episodes ?? [];
-            const rejections = (item.rejections ?? []).filter(r =>
-                r.reason !== "Already imported"); // filterExistingFiles should have handled this
+    // ── Sort: unresolved (no episode match) first ─────────────────────────────
+    const sorted = [...items].sort((a, b) => {
+        const aMatch = (a.episodes?.length ?? 0) > 0;
+        const bMatch = (b.episodes?.length ?? 0) > 0;
+        return aMatch - bMatch; // unresolved (0) before matched (1)
+    });
 
-            let epLine = "";
-            if (episodes.length > 0) {
-                const epLabels = episodes.map(e =>
-                    `S${String(e.seasonNumber).padStart(2,"0")}E${String(e.episodeNumber).padStart(2,"0")}`
-                ).join(", ");
-                epLine = `<div class="unm-ep">→ ${epLabels}</div>`;
-            } else {
-                epLine = `<div class="unm-ep unm-ep-unknown">⚠ No episode match</div>`;
-            }
+    const noMatch  = sorted.filter(i => !(i.episodes?.length > 0));
+    const hasMatch = sorted.filter(i =>  (i.episodes?.length > 0));
 
-            const rejLine = rejections.length
-                ? rejections.map(r =>
-                    `<div class="unm-rejection">⚠ ${r.reason}</div>`
-                  ).join("")
-                : "";
+    function buildFileRow(item) {
+        const { filename, folder } = splitPath(item.relativePath ?? item.path);
+        const size      = fmtSize(item.size);
+        const quality   = item.quality?.quality?.name ?? "";
+        const episodes  = item.episodes ?? [];
+        const rejections = (item.rejections ?? []).filter(r =>
+            r.reason !== "Already imported");
 
-            return `<div class="unm-file${episodes.length === 0 ? " unm-unresolved" : ""}">
-                <div class="unm-path">${relPath}</div>
-                <div class="unm-meta">
-                    ${size ? `<span class="unm-size">${size}</span>` : ""}
-                    ${quality ? `<span class="unm-quality">${quality}</span>` : ""}
+        const matched = episodes.length > 0;
+
+        const epBadges = matched
+            ? episodes.map(e =>
+                `<span class="unm-ep-badge">` +
+                `S${String(e.seasonNumber).padStart(2,"0")}` +
+                `E${String(e.episodeNumber).padStart(2,"0")}` +
+                `</span>`
+              ).join("")
+            : `<span class="unm-ep-badge unm-ep-none">⚠ No episode match</span>`;
+
+        const chips = [
+            size    ? `<span class="unm-chip unm-chip-size">${size}</span>`       : "",
+            quality ? `<span class="unm-chip unm-chip-quality">${quality}</span>` : "",
+        ].filter(Boolean).join("");
+
+        const rejLines = rejections.length
+            ? rejections.map(r =>
+                `<div class="unm-rejection">⚠ ${r.reason}</div>`
+              ).join("")
+            : "";
+
+        return `
+            <div class="unm-file${matched ? "" : " unm-unresolved"}">
+                <div class="unm-filename">${filename}</div>
+                ${folder ? `<div class="unm-folder">${folder}</div>` : ""}
+                <div class="unm-row2">
+                    <div class="unm-chips">${chips}</div>
+                    <div class="unm-eps">${epBadges}</div>
                 </div>
-                ${epLine}
-                ${rejLine}
+                ${rejLines}
             </div>`;
-        }).join("");
+    }
+
+    function buildSection(label, colour, fileItems) {
+        if (!fileItems.length) return "";
+        return `
+            <div class="unm-section">
+                <div class="unm-section-lbl" style="color:${colour}">${label}</div>
+                ${fileItems.map(buildFileRow).join("")}
+            </div>`;
+    }
+
+    const body = items.length === 0
+        ? `<p class="unm-empty">No unmatched files found in series folder.</p>`
+        : buildSection("⚠ No episode match", "#f80", noMatch) +
+          buildSection("✓ Episode matched (not yet imported)", "#6a6", hasMatch);
 
     panel.innerHTML = `
-        <div class="rfp-head" style="color:#f80;border-bottom-color:#3a2a00">
+        <div class="rfp-head" style="color:#f80;border-bottom-color:#3a2000">
             📁 ${items.length} unmatched file${items.length !== 1 ? "s" : ""} in folder
             <span class="rfp-head-close">✕</span>
         </div>
         <div class="rfp-body">
             <p class="rfp-desc">
-                Files found in the series folder that Sonarr has not imported as episode files yet.
+                Files in the series folder that Sonarr hasn't imported yet.
                 They may need manual import or renaming so Sonarr can recognise them.
             </p>
-            <div class="unm-file-list">${fileRows}</div>
+            <div class="unm-file-list">${body}</div>
         </div>
         <div style="padding:10px 13px 14px;flex-shrink:0;display:flex;gap:8px">
             <button class="rfp-btn rfp-cancel" id="unm-close">Close</button>
