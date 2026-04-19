@@ -1,72 +1,44 @@
-// ── Rename mismatch notification ──────────────────────────────────────────────
+// ── Rename mismatch slide-in panel ────────────────────────────────────────────
 
-#rg-rename-notif {
+#rg-rename-panel {
     position: fixed;
-    bottom: 24px;
-    right: 24px;
-    z-index: 9997;
-    width: 360px;
-    background: #1a1a2e;
-    border: 1px solid #4a6;
-    border-radius: 10px;
-    box-shadow: 0 6px 24px rgba(0, 0, 0, .65);
-    font-family: sans-serif;
-    font-size: 12px;
-    color: #e0e0e0;
-    display: none;
-    flex-direction: column;
-    transform: translateY(16px);
-    opacity: 0;
-    transition: transform .2s ease, opacity .2s ease;
-
-    &.open { display: flex; transform: translateY(0); opacity: 1; }
-}
-
-.rn-head {
-    background: #0d2a18;
-    padding: 9px 13px;
-    font-weight: bold;
-    color: #4d9;
-    border-bottom: 1px solid #2a4a36;
-    border-radius: 10px 10px 0 0;
+    top: 0;
+    right: -500px;
+    width: 460px;
+    height: 100vh;
+    background: #12121e;
+    border-left: 1px solid #2a4a36;
+    z-index: 10000;
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-.rn-head-close { cursor: pointer; color: #789; font-size: 14px; }
+    flex-direction: column;
+    box-shadow: -8px 0 32px rgba(0, 0, 0, .65);
+    font-family: sans-serif;
+    font-size: 13px;
+    color: #e0e0e0;
+    transition: right .25s ease;
+    overflow: hidden;
 
-.rn-body {
-    padding: 10px 13px;
+    &.open { right: 0; }
+
+    // Override shared head colour for rename context (green)
+    .rfp-head { color: #4d9; border-bottom-color: #2a4a36; }
+}
+
+// ── File list ─────────────────────────────────────────────────────────────────
+.rn-file-list {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    max-height: 200px;
-    overflow-y: auto;
 }
 
 .rn-file {
-    background: #111120;
-    border-radius: 5px;
-    padding: 6px 9px;
+    background: #0d0d1e;
+    border: 1px solid #1e2a1e;
+    border-radius: 6px;
+    padding: 7px 10px;
     font-family: monospace;
     font-size: 10px;
 }
 .rn-old   { color: #fa0; word-break: break-all; }
-.rn-arrow { color: #456; margin: 2px 0; }
+.rn-arrow { color: #456; margin: 3px 0; }
 .rn-new   { color: #6d6; word-break: break-all; }
-
-.rn-btns { display: flex; gap: 8px; padding: 8px 13px 12px; }
-.rn-btn {
-    flex: 1;
-    padding: 7px 0;
-    border: none;
-    border-radius: 6px;
-    font-size: 12px;
-    font-weight: bold;
-    cursor: pointer;
-}
-.rn-cancel             { background: #2a2a3a; color: #889; }
-.rn-cancel:hover       { background: #3a3a4a; }
-.rn-rename-now         { background: #1a5c2a; color: #cfc; }
-.rn-rename-now:hover   { background: #247a38; }
-.rn-rename-now:disabled { opacity: .4; cursor: default; }

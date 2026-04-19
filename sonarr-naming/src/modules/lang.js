@@ -30,15 +30,27 @@ export function sortedLangs() {
  * Map a language name/code to a 2-char ISO 639-1 code, or "" if unknown.
  *
  * Resolution order:
- *   1. LANG_NAME_MAP  — ISO 639-2 codes used by Sonarr mediaInfo  (e.g. "tha" → "TH")
- *   2. LANGS labels   — full English names used by series/file API  (e.g. "Korean" → "KO")
+ *   1. LANG_NAME_MAP  — ISO 639-2/T three-letter codes  (e.g. "tha" → "TH", "kor" → "KO")
+ *   2. LANGS labels   — full English names               (e.g. "Korean" → "KO")
+ *   3. ISO 639-1      — two-letter codes already in LANGS (e.g. "th" → "TH", "ko" → "KO")
+ *
+ * Sonarr's mediaInfo.subtitles sometimes uses 2-letter codes ("th", "en")
+ * and sometimes 3-letter codes ("tha", "eng") — all three cases are covered.
  */
 export function mapLangNameToCode(name) {
     const lower = name?.toLowerCase().trim() ?? "";
     if (!lower) return "";
-    return LANG_NAME_MAP[lower]
-        ?? LANGS.find(l => l.label.toLowerCase() === lower)?.value
-        ?? "";
+    // 1. ISO 639-2 three-letter codes
+    if (LANG_NAME_MAP[lower]) return LANG_NAME_MAP[lower];
+    // 2. Full English names ("Korean", "Thai", …)
+    const byLabel = LANGS.find(l => l.label.toLowerCase() === lower);
+    if (byLabel) return byLabel.value;
+    // 3. ISO 639-1 two-letter codes — identical to our output codes, just lowercase
+    if (lower.length === 2) {
+        const upper = lower.toUpperCase();
+        if (LANGS.some(l => l.value === upper)) return upper;
+    }
+    return "";
 }
 
 /**

@@ -1,4 +1,5 @@
 import { apiReq, waitForCommand } from "./api.js";
+import { createProgress } from "./progress-ui.js";
 
 // ── Rename mismatch notification ──────────────────────────────────────────────
 
@@ -24,12 +25,12 @@ export async function checkRenameMismatch(series, fileIds, afterRenameCb) {
 }
 
 export function showRenameNotif(series, items, afterRenameCb) {
-    document.getElementById("rg-rename-notif")?.remove();
+    document.getElementById("rg-rename-panel")?.remove();
 
-    const notif = document.createElement("div");
-    notif.id    = "rg-rename-notif";
+    const panel = document.createElement("div");
+    panel.id = "rg-rename-panel";
 
-    const fileRows = items.slice(0, 5).map(r => {
+    const fileRows = items.map(r => {
         const oldName = r.existingPath.split(/[/\\]/).pop();
         const newName = r.newPath.split(/[/\\]/).pop();
         return `<div class="rn-file">
@@ -38,45 +39,55 @@ export function showRenameNotif(series, items, afterRenameCb) {
             <div class="rn-new">${newName}</div>
         </div>`;
     }).join("");
-    const more = items.length > 5
-        ? `<div style="color:#567;font-size:11px;padding:3px 0">…and ${items.length - 5} more</div>` : "";
 
-    notif.innerHTML = `
-        <div class="rn-head">
+    panel.innerHTML = `
+        <div class="rfp-head">
             🔄 ${items.length} file${items.length > 1 ? "s" : ""} need renaming
-            <span class="rn-head-close">✕</span>
+            <span class="rfp-head-close">✕</span>
         </div>
-        <div class="rn-body">${fileRows}${more}</div>
-        <div class="rn-btns">
-            <button class="rn-btn rn-cancel">Dismiss</button>
-            <button class="rn-btn rn-rename-now" id="rn-do-rename">Rename Now</button>
+        <div class="rfp-body">
+            <p class="rfp-desc">
+                Sonarr detected <strong>${items.length}</strong> file${items.length > 1 ? "s" : ""}
+                whose filename does not match current metadata. Review below then rename.
+            </p>
+            <div class="rn-file-list">${fileRows}</div>
+        </div>
+        <div class="rfp-btns" style="padding:10px 13px 14px;flex-shrink:0">
+            <button class="rfp-btn rfp-cancel" id="rn-cancel">Dismiss</button>
+            <button class="rfp-btn rfp-confirm" id="rn-do-rename">Rename Now</button>
         </div>`;
 
-    document.body.appendChild(notif);
-    // Force reflow so transition plays
-    requestAnimationFrame(() => requestAnimationFrame(() => notif.classList.add("open")));
+    document.body.appendChild(panel);
+    requestAnimationFrame(() => panel.classList.add("open"));
 
-    notif.querySelector(".rn-head-close").addEventListener("click", () => notif.remove());
-    notif.querySelector(".rn-cancel").addEventListener("click",     () => notif.remove());
+    panel.querySelector(".rfp-head-close").addEventListener("click", () => panel.classList.remove("open"));
+    panel.querySelector("#rn-cancel").addEventListener("click",      () => panel.classList.remove("open"));
 
-    notif.querySelector("#rn-do-rename").addEventListener("click", async () => {
-        const btn = notif.querySelector("#rn-do-rename");
-        btn.disabled = true; btn.textContent = "Renaming…";
+    panel.querySelector("#rn-do-rename").addEventListener("click", async () => {
+        panel.classList.remove("open");
+
+        const prog = createProgress("🔄 Renaming Files", [
+            "Sending rename command",
+            "Waiting for rename",
+        ]);
+
         try {
+            prog.update(0, "active");
             const cmd = await apiReq("POST", "/api/v3/command", {
                 name: "RenameFiles",
                 seriesId: series.id,
                 files: items.map(r => r.episodeFileId),
             });
-            // Poll until Sonarr actually finishes — then fire afterRenameCb
-            await waitForCommand(cmd.id,
-                st => { btn.textContent = `Renaming… (${st})`; });
-            btn.textContent = "✓ Done";
+            prog.update(0, "done");
+
+            prog.update(1, "active", "queued");
+            await waitForCommand(cmd.id, st => prog.update(1, "active", st));
+            prog.update(1, "done");
+
             if (afterRenameCb) afterRenameCb();
-            setTimeout(() => notif.remove(), 1500);
+            prog.finish(`✓ ${items.length} file${items.length > 1 ? "s" : ""} renamed.`, 1500);
         } catch (e) {
-            btn.textContent = "✗ Error"; btn.disabled = false;
-            setTimeout(() => { btn.textContent = "Rename Now"; }, 2500);
+            prog.fail(`✗ ${e.message}`);
         }
     });
 }
