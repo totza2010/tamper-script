@@ -7,6 +7,7 @@ import { checkRenameMismatch } from "./rename.js";
 import { prefixAlreadyInFilename, buildFixUI, recheckPrefixFiles } from "./prefix-fix.js";
 import { _buildSuggCandidates, buildRGSuggestionUI, recheckRGSuggestions } from "./suggestion.js";
 import { openSettings } from "./settings.js";
+import { checkUnmatchedFiles, showUnmatchedPanel } from "./unmatched.js";
 
 // ── Series page orchestration ─────────────────────────────────────────────────
 
@@ -79,16 +80,35 @@ export function initFABs() {
         }
     });
     document.body.appendChild(suggestBtn);
+
+    // 📁 Unmatched files button
+    const unmatchedBtn = document.createElement("div");
+    unmatchedBtn.id        = "rg-unmatched-btn";
+    unmatchedBtn.className = "rg-fab-side";
+    unmatchedBtn.title     = "Check unmatched files in series folder";
+    unmatchedBtn.textContent = "📁";
+    unmatchedBtn.addEventListener("click", () => {
+        // Toggle: if panel is open, close it
+        const existingPanel = document.getElementById("rg-unmatched-panel");
+        if (existingPanel?.classList.contains("open")) {
+            existingPanel.classList.remove("open");
+            return;
+        }
+        showUnmatchedPanel();
+    });
+    document.body.appendChild(unmatchedBtn);
 }
 
 export async function checkSeriesPage() {
     document.getElementById("rg-fix-panel")?.remove();
     document.getElementById("rg-sugg-panel")?.remove();
     document.getElementById("rg-rename-notif")?.remove();
+    document.getElementById("rg-unmatched-panel")?.remove();
     setSpData(null);
     document.getElementById("rg-check-btn")?.classList.remove("visible");
     document.getElementById("rg-strip-btn")?.classList.remove("visible");
     document.getElementById("rg-suggest-btn")?.classList.remove("visible", "has-suggestions");
+    document.getElementById("rg-unmatched-btn")?.classList.remove("visible", "has-unmatched");
 
     const m = location.pathname.match(/^\/series\/([^/]+)/);
     if (!m) return;
@@ -122,7 +142,9 @@ export async function checkSeriesPage() {
         document.getElementById("rg-check-btn")?.classList.add("visible");
         document.getElementById("rg-strip-btn")?.classList.add("visible");
         document.getElementById("rg-suggest-btn")?.classList.add("visible");
+        document.getElementById("rg-unmatched-btn")?.classList.add("visible");
         injectEpEditBtns();
+        checkUnmatchedFiles(); // fire-and-forget; updates badge when done
 
         const affected = files
             .filter(f => prefixAlreadyInFilename(f))
@@ -171,7 +193,9 @@ export function watchNavigation() {
         } else {
             document.getElementById("rg-fix-panel")?.remove();
             document.getElementById("rg-sugg-panel")?.remove();
+            document.getElementById("rg-unmatched-panel")?.remove();
             document.getElementById("rg-suggest-btn")?.classList.remove("visible", "has-suggestions");
+            document.getElementById("rg-unmatched-btn")?.classList.remove("visible", "has-unmatched");
         }
     };
     const orig = history.pushState;

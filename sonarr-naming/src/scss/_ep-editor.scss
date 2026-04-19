@@ -329,6 +329,11 @@
 #rg-suggest-btn.has-suggestions { border-color: #fa0; color: #fa0; background: #1e1200; }
 #rg-suggest-btn.spinning { animation: rg-spin .8s linear infinite; }
 
+#rg-unmatched-btn { bottom: 192px; }
+#rg-unmatched-btn:hover { border-color: #f80; color: #f80; }
+#rg-unmatched-btn.has-unmatched { border-color: #f80; color: #f80; background: #1e1000; }
+#rg-unmatched-btn.spinning { animation: rg-spin .8s linear infinite; }
+
 @keyframes rg-spin { to { transform: rotate(360deg); } }
 
 // ── Toast ─────────────────────────────────────────────────────────────────────

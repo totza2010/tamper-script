@@ -1,0 +1,68 @@
+// ── Unmatched files slide-in panel ───────────────────────────────────────────
+
+#rg-unmatched-panel {
+    position: fixed;
+    top: 0;
+    right: -500px;
+    width: 460px;
+    height: 100vh;
+    background: #12121e;
+    border-left: 1px solid #3a2a00;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    box-shadow: -8px 0 32px rgba(0, 0, 0, .65);
+    font-family: sans-serif;
+    font-size: 13px;
+    color: #e0e0e0;
+    transition: right .25s ease;
+    overflow: hidden;
+
+    &.open { right: 0; }
+}
+
+// ── File list ─────────────────────────────────────────────────────────────────
+.unm-file-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.unm-file {
+    background: #0d0d1e;
+    border: 1px solid #2a2a3a;
+    border-radius: 6px;
+    padding: 8px 10px;
+
+    &.unm-unresolved { border-color: #4a2800; background: #110a00; }
+}
+
+.unm-path {
+    font-family: monospace;
+    font-size: 10px;
+    color: #aab;
+    word-break: break-all;
+    margin-bottom: 4px;
+}
+
+.unm-meta {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.unm-size    { font-size: 10px; color: #567; }
+.unm-quality { font-size: 10px; color: #7ad; }
+
+.unm-ep {
+    font-size: 11px;
+    color: #6d6;
+
+    &.unm-ep-unknown { color: #f80; }
+}
+
+.unm-rejection {
+    font-size: 10px;
+    color: #d44;
+    margin-top: 2px;
+}
