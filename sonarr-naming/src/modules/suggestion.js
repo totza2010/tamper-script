@@ -186,28 +186,55 @@ export function buildRGSuggestionUI(series, candidates) {
         });
     }
 
-    // ── editTarget: null = "All files", or a specific candidate ──────────
+    // ── editTarget: null = "All files" | {isSeason, sn, files} | candidate ──
     let editTarget = null;
 
-    /** Load values for the given target into the picker (null = All files). */
+    /**
+     * Load values for the given target into the picker.
+     *   null                      → "All files" mode  (only nets/edts propagate)
+     *   {isSeason, sn, files}     → season mode       (all dims for that season)
+     *   candidate object          → per-file mode     (all dims for that file)
+     */
     function loadTarget(target) {
         editTarget = target;
         const lbl = panel.querySelector("#rgsp-edit-target-val");
-        if (lbl) lbl.textContent = target ? fmtEp(target.ep) : "All files";
 
-        // Highlight the focused row
-        tree.querySelectorAll(".rfp-ep-row").forEach(row =>
-            row.classList.toggle("rgsp-focused",
-                !!target && row.dataset.fileId === String(target.id)));
+        // ── Label ──
+        if (lbl) {
+            if (!target)             lbl.textContent = "All files";
+            else if (target.isSeason) lbl.textContent = `Season ${target.sn} (${target.files.length} file${target.files.length > 1 ? "s" : ""})`;
+            else                      lbl.textContent = fmtEp(target.ep);
+        }
 
-        const vals = target
-            ? fileValues.get(target.id)
-            : { audioCodes: bestSugg.audioCodes, subCodes: bestSugg.subCodes, nets: [], edts: [] };
+        // ── Highlight season heads ──
+        tree.querySelectorAll(".rfp-season-head[data-sn]").forEach(h =>
+            h.classList.toggle("rgsp-season-focused",
+                target?.isSeason && String(h.dataset.sn) === String(target.sn)));
 
-        netComp.set(vals.nets,        true);
-        edtComp.set(vals.edts,        true);
-        audioComp.set(vals.audioCodes, true);
-        subComp.set(vals.subCodes,     true);
+        // ── Highlight episode rows ──
+        tree.querySelectorAll(".rfp-ep-row").forEach(row => {
+            let focused = false;
+            if (target?.isSeason)   focused = target.files.some(f => String(f.id) === row.dataset.fileId);
+            else if (target)        focused = row.dataset.fileId === String(target.id);
+            row.classList.toggle("rgsp-focused", focused);
+        });
+
+        // ── Values to load into the picker ──
+        let vals;
+        if (!target) {
+            vals = { audioCodes: bestSugg.audioCodes, subCodes: bestSugg.subCodes, nets: [], edts: [] };
+        } else if (target.isSeason) {
+            // Seed from the first file in the season that has values
+            const seed = target.files.find(f => fileValues.has(f.id));
+            vals = seed ? { ...fileValues.get(seed.id) } : { audioCodes: [], subCodes: [], nets: [], edts: [] };
+        } else {
+            vals = fileValues.get(target.id) ?? { audioCodes: [], subCodes: [], nets: [], edts: [] };
+        }
+
+        netComp.set(vals.nets,         true);
+        edtComp.set(vals.edts,         true);
+        audioComp.set(vals.audioCodes,  true);
+        subComp.set(vals.subCodes,      true);
 
         // Update preview without writing back to fileValues
         const val = buildValue(vals.nets, vals.edts, vals.audioCodes, vals.subCodes);
@@ -234,14 +261,22 @@ export function buildRGSuggestionUI(series, candidates) {
         // Don't touch fileValues until initialization is complete
         if (!initialized) return;
 
-        if (editTarget) {
+        if (editTarget?.isSeason) {
+            // Season mode: apply ALL dimensions to all checked files in this season
+            const newVals = { audioCodes: audio, subCodes: sub, nets, edts };
+            for (const f of editTarget.files) {
+                if (!checked.has(f.id)) continue;
+                fileValues.set(f.id, { ...newVals });
+                const span = tree.querySelector(`.rgsp-new-rg[data-file-id="${f.id}"]`);
+                if (span) span.textContent = val || "—";
+            }
+        } else if (editTarget) {
             // Per-file mode: save all dimensions to the focused file
             fileValues.set(editTarget.id, { audioCodes: audio, subCodes: sub, nets, edts });
             const span = tree.querySelector(`.rgsp-new-rg[data-file-id="${editTarget.id}"]`);
             if (span) span.textContent = val || "—";
         } else {
-            // "All files" mode: only nets & edts propagate to all checked files.
-            // Audio/sub codes stay per-file (each file keeps its own mediaInfo suggestion).
+            // "All files" mode: only nets & edts propagate — audio/sub stay per-file
             for (const c of candidates) {
                 if (!checked.has(c.id)) continue;
                 const fv = fileValues.get(c.id);
@@ -279,9 +314,10 @@ export function buildRGSuggestionUI(series, candidates) {
 
             const head = document.createElement("div");
             head.className = "rfp-season-head";
+            head.dataset.sn = sn;
             head.innerHTML = `
                 <input type="checkbox" class="rfp-chk rfp-season-chk" data-sn="${sn}">
-                <span class="rfp-season-label">
+                <span class="rfp-season-label" title="Click to edit this season's Release Group">
                     Season ${sn} <em>(${files.length} file${files.length > 1 ? "s" : ""})</em>
                 </span>
                 <span class="rfp-toggle">▲</span>`;
@@ -328,14 +364,21 @@ export function buildRGSuggestionUI(series, candidates) {
             block.appendChild(epList);
             tree.appendChild(block);
 
-            // Toggle expand/collapse
             const toggle = head.querySelector(".rfp-toggle");
             const label  = head.querySelector(".rfp-season-label");
-            [toggle, label].forEach(el => el.addEventListener("click", () => {
+
+            // ▲/▼ chevron → expand/collapse only
+            toggle.addEventListener("click", () => {
                 expanded = !expanded;
                 epList.style.display = expanded ? "block" : "none";
                 toggle.textContent = expanded ? "▲" : "▼";
-            }));
+            });
+
+            // Season label → enter/exit season edit mode
+            label.addEventListener("click", () => {
+                const alreadyFocused = editTarget?.isSeason && editTarget.sn === sn;
+                loadTarget(alreadyFocused ? null : { isSeason: true, sn, files });
+            });
 
             // Season checkbox
             chk.addEventListener("change", () => {

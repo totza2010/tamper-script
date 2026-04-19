@@ -120,11 +120,24 @@
 }
 .rgsp-edit-target-val { color: #4ef; font-weight: bold; }
 
-// ── Focused row in tree ───────────────────────────────────────────────────────
+// ── Focused row / season in tree ─────────────────────────────────────────────
 .rfp-ep-row.rgsp-focused {
     background: #0d1f2a;
     border-radius: 5px;
     outline: 1px solid #2a7aaa;
+}
+
+// Season header focused (season edit mode)
+.rfp-season-head.rgsp-season-focused {
+    background: #0d2030;
+    border-left: 3px solid #4cc;
+    .rfp-season-label { color: #4ef; }
+}
+
+// Season label is clickable
+.rfp-season-label {
+    cursor: pointer;
+    &:hover { color: #9cf; }
 }
 
 // ── Clickable area of each ep row ────────────────────────────────────────────
