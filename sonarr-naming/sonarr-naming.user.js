@@ -9,5 +9,5 @@
 // @match        https://sonarr-edition.privox.top/*
 // @grant        GM_getValue
 // @grant        GM_setValue
-// @require      file://C:\Users\T14_think\tmdb-to-tvdb\sonarr-naming\dist\sonarr-naming.js
+// @require      https://raw.githubusercontent.com/totza2010/tamper-script/main/sonarr-naming/dist/cover-next.js
 // ==/UserScript==
