@@ -73,11 +73,9 @@ export function sortAudioCodes(codes, originalCode) {
 }
 
 /**
- * Sort SUBTITLE codes by priority: TH → EN → originalCode.
- *
- * Unlike audio, the original language is ALWAYS added as the 3rd slot when
- * it is not TH or EN — because streaming platforms almost always include the
- * original-language subtitle track, even if the MediaInfo scan missed it.
+ * Sort SUBTITLE codes by priority: TH → EN → originalCode → (others excluded).
+ * The original language is included only when it is actually detected in the file's
+ * subtitle tracks — never force-added. Use only what MediaInfo reports.
  *
  * @param {string[]} codes        - deduplicated 2-letter codes from parseLangString
  * @param {string}   originalCode - 2-letter code of the series' original language
@@ -85,8 +83,8 @@ export function sortAudioCodes(codes, originalCode) {
 export function sortSubCodes(codes, originalCode) {
     const PRIORITY = ["TH", "EN"];
     const result   = PRIORITY.filter(c => codes.includes(c));
-    // Always guarantee the original language slot (unless it's already TH or EN).
-    if (originalCode && !PRIORITY.includes(originalCode) && !result.includes(originalCode)) {
+    // Add original language only when it is actually present in the subtitle tracks.
+    if (originalCode && !PRIORITY.includes(originalCode) && codes.includes(originalCode)) {
         result.push(originalCode);
     }
     return result.slice(0, 3);
