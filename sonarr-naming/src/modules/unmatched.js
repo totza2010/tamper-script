@@ -44,6 +44,18 @@ function extractPartNum(filename) {
 }
 
 /**
+ * Extract the part format keyword from a filename.
+ * e.g. "...-part1-..." → "part"
+ *      "...-pt2-..."   → "pt"
+ *      "...-cd1..."    → "cd"
+ * Defaults to "part" if nothing is found.
+ */
+function extractPartFormat(filename) {
+    const m = filename.match(/(cd|disc|disk|dvd|part|pt)\s*\d+/i);
+    return m ? m[1].toLowerCase() : "part";
+}
+
+/**
  * Strip any leading part indicator from a release-group string.
  * e.g. "part2-AudioJASubTHEN" → "AudioJASubTHEN"
  *      "AudioJASubTHEN"       → "AudioJASubTHEN"  (no change)
@@ -56,17 +68,24 @@ function stripPartFromRG(rg) {
 }
 
 /**
- * Compute a rename target by inserting "-ptN" between {[Custom Formats]} and
- * {-Release Group} in the Sonarr episode-file name.
+ * Compute a rename target by inserting "-{format}{N}" between
+ * {[Custom Formats]} and {-Release Group} in the Sonarr episode-file name.
  *
- *   `S01E01 - Title - [DVD]-AudioJASubTHEN.mkv`
- * →  `S01E01 - Title - [DVD]-pt2-AudioJASubTHEN.mkv`
+ * `format` is the Plex part keyword detected from the unmatched file:
+ *   "part" → "...[DVD]-part2-AudioJASubTHEN.mkv"
+ *   "pt"   → "...[DVD]-pt2-AudioJASubTHEN.mkv"
+ *   "cd"   → "...[DVD]-cd2-AudioJASubTHEN.mkv"
+ *   …etc.
  *
- * Strips any existing part indicator from both the filename base and the
- * release-group before re-inserting, so "-part2-" never doubles up.
- * Falls back to appending "- ptN" when the release group can't be found.
+ * Internally strips any existing part indicator from the filename base and the
+ * release-group, then re-inserts with the requested format+number.
+ * Falls back to appending "- {format}{N}" when the RG can't be found.
+ *
+ * @param {object} importedFile  Sonarr episodefile object
+ * @param {number} partNum
+ * @param {string} [format="pt"] Part format keyword (part / pt / cd / disc / disk / dvd)
  */
-function computeTargetName(importedFile, partNum) {
+function computeTargetName(importedFile, partNum, format = "pt") {
     const { filename } = splitPath(importedFile.relativePath ?? "");
     if (!filename) return null;
     const dot = filename.lastIndexOf(".");
@@ -79,20 +98,24 @@ function computeTargetName(importedFile, partNum) {
         .replace(/-{2,}/g, "-")
         .replace(/-$/, "");
 
-    // Use cleaned release group (strip leading partN if present)
-    const rg = stripPartFromRG(importedFile.releaseGroup);
-    if (rg) {
-        const rgSuffix = `-${rg}`;
+    // Get the clean base release-group (strip leading "part2-" etc. if present)
+    const baseRG = stripPartFromRG(importedFile.releaseGroup);
+
+    // Build the new part+RG token using the caller-supplied format
+    const partToken = `${format}${partNum}`;
+
+    if (baseRG) {
+        const rgSuffix = `-${baseRG}`;
         if (base.endsWith(rgSuffix)) {
-            return `${base.slice(0, base.length - rgSuffix.length)}-pt${partNum}-${rg}${ext}`;
+            return `${base.slice(0, base.length - rgSuffix.length)}-${partToken}-${baseRG}${ext}`;
         }
         if (base.toLowerCase().endsWith(rgSuffix.toLowerCase())) {
-            return `${base.slice(0, base.length - rgSuffix.length)}-pt${partNum}-${rg}${ext}`;
+            return `${base.slice(0, base.length - rgSuffix.length)}-${partToken}-${baseRG}${ext}`;
         }
     }
 
     // Last resort: append
-    return `${base} - pt${partNum}${ext}`;
+    return `${base} - ${partToken}${ext}`;
 }
 
 /**
@@ -365,6 +388,7 @@ function renderDetectedDecisionWrap(dec, epOpts, thisPartNum, autoPaired = false
                         data-fileid="${dec.episodeFileId}"
                         data-partnum="${dec.sonarrPartNum}"
                         data-rg="${esc(dec.sonarrOriginalRG ?? "")}"
+                        data-format="${esc(dec.partFormat ?? "part")}"
                         title="Update release group and trigger Sonarr rename">↺ Rename</button>
                 </div>
             </div>
@@ -411,6 +435,7 @@ function buildDetectedCard(item, dec, epOpts, pairedFile) {
     const { filename, folder } = splitPath(path);
     const partLabel   = extractPartLabel(filename);
     const thisPartNum = extractPartNum(filename) ?? 1;
+    const partFormat  = extractPartFormat(filename);   // "part" / "pt" / "cd" / …
     const autoPaired  = !!pairedFile;
 
     let validBlock;
@@ -429,6 +454,7 @@ function buildDetectedCard(item, dec, epOpts, pairedFile) {
     return `<div class="unm-file unm-file--detected-part"
                 data-path="${esc(encodeURIComponent(path))}"
                 data-this-part="${thisPartNum}"
+                data-part-format="${partFormat}"
                 ${autoPaired ? 'data-auto-paired="true"' : ""}>
         <div class="unm-filename">${esc(filename)}</div>
         ${folder ? `<div class="unm-folder">${esc(folder)}</div>` : ""}
@@ -614,7 +640,8 @@ export function showUnmatchedPanel() {
 
         const opt = panel._epOpts.find(o => o.fileId === fileId);
         if (!opt) return;
-        const target = computeTargetName(opt.file, partN);
+        // Unmatched cards use "pt" format — the pills are labelled pt2, pt3…
+        const target = computeTargetName(opt.file, partN, "pt");
         if (!target) return;
 
         if (targetSpan) targetSpan.textContent = target;
@@ -640,8 +667,8 @@ export function showUnmatchedPanel() {
         const preview      = card.querySelector(".unm-det-preview");
         const confirmBtn   = card.querySelector(".unm-det-confirm-btn");
 
-        const fileId     = parseInt(select?.value);
-        const thisPartN  = activeThis   ? parseInt(activeThis.dataset.part)   : null;
+        const fileId      = parseInt(select?.value);
+        const thisPartN   = activeThis   ? parseInt(activeThis.dataset.part)   : null;
         const sonarrPartN = activeSonarr ? parseInt(activeSonarr.dataset.part) : null;
 
         if (!fileId || !thisPartN || !sonarrPartN) {
@@ -653,17 +680,21 @@ export function showUnmatchedPanel() {
         const opt = panel._epOpts.find(o => o.fileId === fileId);
         if (!opt) return;
 
-        const thisTarget   = computeTargetName(opt.file, thisPartN);
-        const sonarrTarget = computeTargetName(opt.file, sonarrPartN);
+        // Format detected from the unmatched file (e.g. "part", "pt", "cd"…)
+        // stored on the card as data-part-format by buildDetectedCard.
+        const partFormat = card.dataset.partFormat ?? "part";
+
+        const thisTarget   = computeTargetName(opt.file, thisPartN,   partFormat);
+        const sonarrTarget = computeTargetName(opt.file, sonarrPartN, partFormat);
         if (!thisTarget || !sonarrTarget) return;
 
-        // Strip any part indicator from the release group before storing
-        // so the API rename produces "pt2-AudioJASubTHEN" not "pt2-part2-AudioJASubTHEN"
+        // Base RG (without any part prefix) — used by the API rename handler to
+        // build "part2-AudioJASubTHEN" via PUT episodefile + RenameFiles.
         const sonarrRG = stripPartFromRG(opt.file.releaseGroup);
 
         // Store in temp map (not persisted until confirmed)
         const path = decodeURIComponent(card.dataset.path ?? "");
-        detPickTemp.set(path, { fileId, thisPartN, sonarrPartN, thisTarget, sonarrTarget, sonarrRG });
+        detPickTemp.set(path, { fileId, thisPartN, sonarrPartN, partFormat, thisTarget, sonarrTarget, sonarrRG });
 
         if (preview) {
             preview.classList.remove("unm-rename--hidden");
@@ -673,7 +704,7 @@ export function showUnmatchedPanel() {
                     <span class="unm-rename-target">${esc(thisTarget)}</span>
                     <button class="unm-copy-btn" data-copy="${esc(thisTarget)}" title="Copy filename">📋</button>
                 </div>
-                <div class="unm-rename-lbl" style="margin-top:5px">Sonarr file pt${sonarrPartN} — rename via API:</div>
+                <div class="unm-rename-lbl" style="margin-top:5px">Sonarr file ${partFormat}${sonarrPartN} — rename via API:</div>
                 <div class="unm-rename-row">
                     <span class="unm-rename-target">${esc(sonarrTarget)}</span>
                 </div>`;
@@ -727,6 +758,7 @@ export function showUnmatchedPanel() {
                 episodeFileId:    temp.fileId,
                 thisPartNum:      temp.thisPartN,
                 sonarrPartNum:    temp.sonarrPartN,
+                partFormat:       temp.partFormat,
                 thisTargetName:   temp.thisTarget,
                 sonarrTargetName: temp.sonarrTarget,
                 sonarrOriginalRG: temp.sonarrRG,
@@ -773,19 +805,23 @@ export function showUnmatchedPanel() {
         // ── API rename button ─────────────────────────────────────────────────
         const apiBtn = e.target.closest(".unm-api-rename-btn");
         if (apiBtn && !apiBtn.classList.contains("spinning") && !apiBtn.classList.contains("done")) {
-            const fileId  = parseInt(apiBtn.dataset.fileid);
-            const partNum = parseInt(apiBtn.dataset.partnum);
-            // data-rg is already stripped of any part indicator (stored by tryUpdateDetRename)
-            const origRG  = apiBtn.dataset.rg ?? "";
+            const fileId     = parseInt(apiBtn.dataset.fileid);
+            const partNum    = parseInt(apiBtn.dataset.partnum);
+            // data-rg   = base release group WITHOUT any part prefix (e.g. "AudioJASubTHEN")
+            // data-format = part format detected from unmatched file (e.g. "part", "pt", "cd"…)
+            const origRG     = apiBtn.dataset.rg ?? "";
+            const partFormat = apiBtn.dataset.format ?? "part";
             if (!fileId || !partNum) return;
 
             apiBtn.classList.add("spinning");
             apiBtn.textContent = "…";
 
             try {
-                const spd   = getSpData();
-                // Prepend ptN-  →  {[Custom Formats]}-ptN-{Release Group}
-                const newRG = origRG ? `pt${partNum}-${origRG}` : `pt${partNum}`;
+                const spd = getSpData();
+                // Build new RG: "part2-AudioJASubTHEN" using the same format
+                // keyword the unmatched file already uses, so Sonarr produces a
+                // consistent name → {[Custom Formats]}-part2-{Release Group}
+                const newRG = origRG ? `${partFormat}${partNum}-${origRG}` : `${partFormat}${partNum}`;
                 await apiReq("PUT", `/api/v3/episodefile/${fileId}`, { releaseGroup: newRG });
                 await apiReq("POST", "/api/v3/command", {
                     name:     "RenameFiles",
