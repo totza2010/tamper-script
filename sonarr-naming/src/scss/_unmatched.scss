@@ -28,21 +28,18 @@
     gap: 6px;
     margin-bottom: 10px;
 }
-
 .unm-hcount {
     padding: 3px 10px;
     border-radius: 10px;
     font-size: 11px;
     font-weight: bold;
-
     &.unm-hcount--warn { background: #2a1000; color: #f80;  border: 1px solid #5a2800; }
     &.unm-hcount--part { background: #0d1a2a; color: #5ad;  border: 1px solid #1a3a55; }
     &.unm-hcount--ok   { background: #0d2010; color: #5c5;  border: 1px solid #1a4a2a; }
 }
 
 // ── Sections ──────────────────────────────────────────────────────────────────
-.unm-section { margin-bottom: 14px; }
-
+.unm-section        { margin-bottom: 14px; }
 .unm-section-lbl {
     font-size: 10px;
     text-transform: uppercase;
@@ -51,30 +48,24 @@
     margin-bottom: 6px;
     padding-left: 2px;
 }
-
 .unm-section--problem  .unm-section-lbl { color: #f80; }
 .unm-section--multipart .unm-section-lbl { color: #5ad; }
 .unm-section--pending   .unm-section-lbl { color: #5c5; }
 
 // ── Card list ─────────────────────────────────────────────────────────────────
-.unm-card-list {
-    border-radius: 6px;
-    overflow: hidden;
-}
+.unm-card-list { border-radius: 6px; overflow: hidden; }
 
 .unm-file {
     background: #0d0d1e;
     border-bottom: 1px solid #1a1a2e;
     padding: 9px 11px;
-
     &:last-child { border-bottom: none; }
 }
-
-.unm-file--pairable      { border-left: 3px solid #c05000; background: #0f0800; }
+.unm-file--pairable      { border-left: 3px solid #7a3000; background: #0f0800; }
 .unm-file--detected-part { border-left: 3px solid #1a4a70; background: #08101a; }
 .unm-file--pending       { border-left: 3px solid #1a5a2a; background: #060e08; }
 
-// ── File info ─────────────────────────────────────────────────────────────────
+// File info
 .unm-filename {
     font-family: monospace;
     font-size: 11px;
@@ -83,59 +74,44 @@
     line-height: 1.45;
     margin-bottom: 2px;
 }
-
 .unm-folder {
     font-family: monospace;
     font-size: 9px;
-    color: #3a4a55;
+    color: #3a4055;
     word-break: break-all;
     margin-bottom: 5px;
 }
-
-.unm-row2 {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-}
-
+.unm-row2 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .unm-chips { display: flex; gap: 5px; }
-
 .unm-chip {
     padding: 2px 8px;
     border-radius: 10px;
     font-size: 10px;
     font-weight: bold;
-
     &.unm-chip-size    { background: #1a1a2e; color: #567;  border: 1px solid #2a2a40; }
     &.unm-chip-quality { background: #0d1e2a; color: #5ad;  border: 1px solid #1a3a50; }
 }
-
 .unm-eps { display: flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
-
 .unm-ep-badge {
     padding: 2px 8px;
     border-radius: 10px;
     font-size: 10px;
     font-weight: bold;
-
     &.unm-ep-match { background: #0d2010; color: #5c5;  border: 1px solid #2a5a2a; }
     &.unm-ep-none  { background: #1e0e00; color: #f80;  border: 1px solid #5a2800; }
     &.unm-ep-part  { background: #0d1a2a; color: #5ad;  border: 1px solid #1a3a55; text-transform: capitalize; }
 }
 
-// ── Rename suggestion box ─────────────────────────────────────────────────────
+// ── Rename box ────────────────────────────────────────────────────────────────
 .unm-rename {
     margin-top: 7px;
     padding: 7px 9px;
     background: #080e18;
     border: 1px solid #1a3050;
     border-radius: 5px;
-
     &.unm-rename--hidden  { display: none; }
-    &.unm-rename--unknown { color: #456; font-size: 10px; font-style: italic; }
+    &.unm-rename--unknown { color: #456; font-size: 10px; font-style: italic; border-color: #1a1a2a; }
 }
-
 .unm-rename-lbl {
     font-size: 9px;
     text-transform: uppercase;
@@ -143,9 +119,7 @@
     color: #3a5070;
     margin-bottom: 4px;
 }
-
-.unm-rename-row { display: flex; align-items: center; gap: 6px; }
-
+.unm-rename-row    { display: flex; align-items: center; gap: 6px; }
 .unm-rename-target {
     flex: 1;
     font-family: monospace;
@@ -154,7 +128,6 @@
     word-break: break-all;
     line-height: 1.4;
 }
-
 .unm-copy-btn {
     flex-shrink: 0;
     padding: 3px 8px;
@@ -166,56 +139,96 @@
     cursor: pointer;
     transition: all .14s;
     line-height: 1;
-
     &:hover  { border-color: #4ad; background: #112a40; }
     &.copied { border-color: #4d4; color: #4d4; background: #0d2010; }
 }
 
-// ── Multi-part pairing UI ─────────────────────────────────────────────────────
-.unm-pair-wrap { margin-top: 8px; }
+// ── Decision wrap ─────────────────────────────────────────────────────────────
+.unm-decision-wrap { margin-top: 8px; }
 
-.unm-pair-toggle {
-    width: 100%;
-    padding: 6px 10px;
+// Action buttons: 2×2 grid
+.unm-action-btns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+}
+.unm-act {
+    padding: 6px 8px;
     border-radius: 5px;
-    border: 1px dashed #4a2800;
-    background: #180c00;
-    color: #a06030;
+    border: 1px solid #2a2a40;
+    background: #0d0d1e;
+    color: #667;
     font-size: 11px;
     cursor: pointer;
-    text-align: left;
+    text-align: center;
     transition: all .14s;
+    -webkit-user-select: none;
+    user-select: none;
+    &:hover { border-color: #4a4a66; color: #99b; background: #12122a; }
+}
+.unm-act--part:hover    { border-color: #5ad; color: #7cf; background: #08101a; }
+.unm-act--version:hover { border-color: #8a6; color: #ac8; background: #0a120a; }
+.unm-act--ignore:hover  { border-color: #556; color: #889; }
+.unm-act--delete:hover  { border-color: #a33; color: #d55; background: #180808; }
 
-    &:hover  { border-color: #f80; color: #f80; background: #1e1000; }
-    &.active { border-color: #5ad; color: #5ad; background: #0a1520; border-style: solid; }
+// Decision container
+.unm-decision {
+    padding: 8px 10px;
+    border-radius: 5px;
+    background: #0d0d1e;
+    border: 1px solid #2a2a40;
+}
+.unm-decision--multipart { background: #08101a; border-color: #1a3a55; }
+.unm-decision--version   { background: #080e08; border-color: #1a3a1a; }
+.unm-decision--ignore    { background: #0d0d14; border-color: #1e1e30; }
+.unm-decision--delete    { background: #150808; border-color: #3a1010; }
+
+.unm-decision-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 2px;
+}
+.unm-decision-badge {
+    font-size: 11px;
+    font-weight: bold;
+    .unm-decision--multipart & { color: #5ad; }
+    .unm-decision--version   & { color: #6a6; }
+    .unm-decision--ignore    & { color: #556; }
+    .unm-decision--delete    & { color: #c44; }
+}
+.unm-undo-btn {
+    padding: 2px 7px;
+    border-radius: 4px;
+    border: 1px solid #2a2a40;
+    background: transparent;
+    color: #456;
+    font-size: 10px;
+    cursor: pointer;
+    transition: all .12s;
+    &:hover { border-color: #556; color: #889; }
+}
+.unm-decision-note {
+    font-size: 10px;
+    color: #567;
+    margin-top: 4px;
 }
 
+// ── Multi-part pairing form ───────────────────────────────────────────────────
 .unm-pair-form {
     display: none;
-    margin-top: 7px;
-    padding: 9px 10px;
-    background: #080d18;
-    border: 1px solid #1a2a40;
-    border-radius: 5px;
-
+    margin-top: 8px;
     &.open { display: block; }
 }
-
-.unm-pair-field {
-    margin-bottom: 8px;
-
-    &:last-child { margin-bottom: 0; }
-}
-
+.unm-pair-field { margin-bottom: 7px; &:last-child { margin-bottom: 0; } }
 .unm-pair-lbl {
     display: block;
     font-size: 9px;
     text-transform: uppercase;
     letter-spacing: .07em;
     color: #3a5070;
-    margin-bottom: 5px;
+    margin-bottom: 4px;
 }
-
 .unm-pair-ep {
     width: 100%;
     padding: 5px 8px;
@@ -226,13 +239,9 @@
     font-size: 11px;
     outline: none;
     cursor: pointer;
-
     &:focus { border-color: #4ad; }
 }
-
-// Part number pills
 .unm-part-pills { display: flex; gap: 5px; flex-wrap: wrap; }
-
 .unm-part-pill {
     padding: 3px 12px;
     border-radius: 10px;
@@ -245,15 +254,9 @@
     transition: all .14s;
     -webkit-user-select: none;
     user-select: none;
-
     &:hover  { border-color: #5ad; color: #8ce; }
     &.active { border-color: #4ad; color: #4ef; background: #0d2030; }
 }
 
 // ── Empty state ───────────────────────────────────────────────────────────────
-.unm-empty {
-    color: #567;
-    font-size: 12px;
-    text-align: center;
-    padding: 20px 0;
-}
+.unm-empty { color: #567; font-size: 12px; text-align: center; padding: 20px 0; }
