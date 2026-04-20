@@ -319,5 +319,52 @@
     &.active { border-color: #4ad; color: #4ef; background: #0d2030; }
 }
 
+// ── Renamed-ok indicator (replaces ↺ Rename button after API success) ────────
+.unm-renamed-ok {
+    flex-shrink: 0;
+    padding: 2px 8px;
+    border-radius: 5px;
+    border: 1px solid #1a4a1a;
+    background: #060e06;
+    color: #5c5;
+    font-size: 11px;
+    font-weight: bold;
+}
+
+// ── Visual distinction by decision type (data-decision attribute) ─────────────
+// Applied to .unm-file cards to reflect their current classification state.
+
+// Confirmed multi-part pairing
+.unm-file[data-decision="det-multipart"],
+.unm-file[data-decision="multipart"] {
+    border-left-color: #1a70aa;
+    background: #05101a;
+}
+
+// Auto-paired (both files already have part indicators — no rename needed)
+.unm-file[data-decision="auto-paired"] {
+    border-left-color: #1a70aa;
+    background: #05101a;
+}
+
+// Multi-version duplicate
+.unm-file[data-decision="version"] {
+    border-left-color: #2a7a30;
+    background: #050e05;
+}
+
+// Ignored / acknowledged
+.unm-file[data-decision="ignore"] {
+    border-left-color: #2a2a45;
+    background: #08080f;
+    opacity: 0.65;
+}
+
+// Flagged to delete
+.unm-file[data-decision="delete"] {
+    border-left-color: #7a1515;
+    background: #110505;
+}
+
 // ── Empty state ───────────────────────────────────────────────────────────────
 .unm-empty { color: #567; font-size: 12px; text-align: center; padding: 20px 0; }

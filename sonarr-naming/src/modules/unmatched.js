@@ -70,20 +70,6 @@ function stripPartFromRG(rg) {
 /**
  * Compute a rename target by inserting "-{format}{N}" between
  * {[Custom Formats]} and {-Release Group} in the Sonarr episode-file name.
- *
- * `format` is the Plex part keyword detected from the unmatched file:
- *   "part" → "...[DVD]-part2-AudioJASubTHEN.mkv"
- *   "pt"   → "...[DVD]-pt2-AudioJASubTHEN.mkv"
- *   "cd"   → "...[DVD]-cd2-AudioJASubTHEN.mkv"
- *   …etc.
- *
- * Internally strips any existing part indicator from the filename base and the
- * release-group, then re-inserts with the requested format+number.
- * Falls back to appending "- {format}{N}" when the RG can't be found.
- *
- * @param {object} importedFile  Sonarr episodefile object
- * @param {number} partNum
- * @param {string} [format="pt"] Part format keyword (part / pt / cd / disc / disk / dvd)
  */
 function computeTargetName(importedFile, partNum, format = "pt") {
     const { filename } = splitPath(importedFile.relativePath ?? "");
@@ -300,12 +286,36 @@ function renderDecisionWrap(dec, epOpts) {
  * @param {number}      thisPartNum  – auto-detected from the unmatched file's name
  * @param {boolean}     autoPaired   – true when the Sonarr-matched file already
  *                                     carries a Plex part indicator (S02E06 case)
+ * @param {object|null} pairedInfo   – { thisFilename, pairFilename,
+ *                                       thisPartLabel, pairPartLabel }
+ *                                     when autoPaired and we have the partner's info
  */
-function renderDetectedDecisionWrap(dec, epOpts, thisPartNum, autoPaired = false) {
+function renderDetectedDecisionWrap(dec, epOpts, thisPartNum, autoPaired = false, pairedInfo = null) {
     // ── No decision yet ───────────────────────────────────────────────────────
     if (!dec) {
+        if (autoPaired && pairedInfo) {
+            // Already a valid Plex pair — show same confirmed-pairing style as S02E04
+            return `<div class="unm-decision-wrap">
+                <div class="unm-decision unm-decision--multipart">
+                    <div class="unm-decision-head">
+                        <span class="unm-decision-badge">📼 ${esc(pairedInfo.thisPartLabel)} + ${esc(pairedInfo.pairPartLabel)}</span>
+                    </div>
+                    <div class="unm-rename-lbl" style="margin-top:6px">This file:</div>
+                    <div class="unm-rename-row">
+                        <span class="unm-rename-target">${esc(pairedInfo.thisFilename)}</span>
+                    </div>
+                    <div class="unm-rename-lbl" style="margin-top:6px">Sonarr file:</div>
+                    <div class="unm-rename-row">
+                        <span class="unm-rename-target">${esc(pairedInfo.pairFilename)}</span>
+                    </div>
+                </div>
+                <div class="unm-action-btns" style="margin-top:5px">
+                    <button class="unm-act unm-act--ignore" data-action="ignore">👁 Acknowledge</button>
+                </div>
+            </div>`;
+        }
         if (autoPaired) {
-            // Already a valid Plex pair — only offer "acknowledge / ignore"
+            // Fallback when pairedInfo not available
             return `<div class="unm-decision-wrap">
                 <div class="unm-action-btns">
                     <button class="unm-act unm-act--ignore" data-action="ignore">👁 Acknowledge</button>
@@ -364,16 +374,41 @@ function renderDetectedDecisionWrap(dec, epOpts, thisPartNum, autoPaired = false
         </div>`;
     }
 
-    // ── Confirmed ─────────────────────────────────────────────────────────────
+    // ── Confirmed pairing ─────────────────────────────────────────────────────
     if (dec.type === "det-multipart") {
         const ep = epOpts.find(o => o.fileId === dec.episodeFileId);
         const epTag = ep
             ? `S${String(ep.sn).padStart(2,"0")}E${String(ep.ep).padStart(2,"0")}`
             : "";
+        const pf = dec.partFormat ?? "pt";
+
+        // After Sonarr rename completed — remove action buttons, show ✓ indicators
+        if (dec.sonarrRenamed) {
+            return `<div class="unm-decision-wrap">
+                <div class="unm-decision unm-decision--multipart">
+                    <div class="unm-decision-head">
+                        <span class="unm-decision-badge">📼 ${pf}${dec.thisPartNum}${epTag ? ` of ${epTag}` : ""}</span>
+                        <button class="unm-undo-btn">× undo</button>
+                    </div>
+                    <div class="unm-rename-lbl" style="margin-top:6px">This file — rename manually:</div>
+                    <div class="unm-rename-row">
+                        <span class="unm-rename-target">${esc(dec.thisTargetName)}</span>
+                        <button class="unm-copy-btn" data-copy="${esc(dec.thisTargetName)}" title="Copy filename">📋</button>
+                    </div>
+                    <div class="unm-rename-lbl" style="margin-top:6px">Sonarr file ${pf}${dec.sonarrPartNum}:</div>
+                    <div class="unm-rename-row">
+                        <span class="unm-rename-target">${esc(dec.sonarrTargetName)}</span>
+                        <span class="unm-renamed-ok">✓ renamed</span>
+                    </div>
+                </div>
+            </div>`;
+        }
+
+        // Normal confirmed state — copy btn for this file, API rename btn for Sonarr file
         return `<div class="unm-decision-wrap">
             <div class="unm-decision unm-decision--multipart">
                 <div class="unm-decision-head">
-                    <span class="unm-decision-badge">📼 pt${dec.thisPartNum}${epTag ? ` of ${epTag}` : ""}</span>
+                    <span class="unm-decision-badge">📼 ${pf}${dec.thisPartNum}${epTag ? ` of ${epTag}` : ""}</span>
                     <button class="unm-undo-btn">× undo</button>
                 </div>
                 <div class="unm-rename-lbl" style="margin-top:6px">This file — copy &amp; rename manually:</div>
@@ -381,14 +416,14 @@ function renderDetectedDecisionWrap(dec, epOpts, thisPartNum, autoPaired = false
                     <span class="unm-rename-target">${esc(dec.thisTargetName)}</span>
                     <button class="unm-copy-btn" data-copy="${esc(dec.thisTargetName)}" title="Copy filename">📋</button>
                 </div>
-                <div class="unm-rename-lbl" style="margin-top:6px">Sonarr file pt${dec.sonarrPartNum} — rename via API:</div>
+                <div class="unm-rename-lbl" style="margin-top:6px">Sonarr file ${pf}${dec.sonarrPartNum} — rename via API:</div>
                 <div class="unm-rename-row">
                     <span class="unm-rename-target">${esc(dec.sonarrTargetName)}</span>
                     <button class="unm-api-rename-btn"
                         data-fileid="${dec.episodeFileId}"
                         data-partnum="${dec.sonarrPartNum}"
                         data-rg="${esc(dec.sonarrOriginalRG ?? "")}"
-                        data-format="${esc(dec.partFormat ?? "part")}"
+                        data-format="${esc(pf)}"
                         title="Update release group and trigger Sonarr rename">↺ Rename</button>
                 </div>
             </div>
@@ -411,7 +446,8 @@ function renderDetectedDecisionWrap(dec, epOpts, thisPartNum, autoPaired = false
 function buildUnmatchedCard(item, dec, epOpts) {
     const path = item.relativePath ?? item.path ?? "";
     const { filename, folder } = splitPath(path);
-    return `<div class="unm-file unm-file--pairable" data-path="${esc(encodeURIComponent(path))}">
+    const decType = dec?.type ?? "";
+    return `<div class="unm-file unm-file--pairable" data-path="${esc(encodeURIComponent(path))}" data-decision="${esc(decType)}">
         <div class="unm-filename">${esc(filename)}</div>
         ${folder ? `<div class="unm-folder">${esc(folder)}</div>` : ""}
         <div class="unm-row2">
@@ -437,33 +473,35 @@ function buildDetectedCard(item, dec, epOpts, pairedFile) {
     const thisPartNum = extractPartNum(filename) ?? 1;
     const partFormat  = extractPartFormat(filename);   // "part" / "pt" / "cd" / …
     const autoPaired  = !!pairedFile;
+    const decType     = dec?.type ?? (autoPaired ? "auto-paired" : "");
 
-    let validBlock;
+    // Build pairedInfo for auto-paired cards so we can render the partner filename
+    let pairedInfo = null;
+    let pairFilenameEncoded = "";
     if (autoPaired) {
         const { filename: pfn } = splitPath(pairedFile.relativePath ?? "");
-        validBlock = `<div class="unm-rename unm-rename--ok">
-            ✓ Already a Plex multi-part pair — no rename needed
-            <div class="unm-pair-partner">with: ${esc(pfn)}</div>
-        </div>`;
-    } else {
-        validBlock = `<div class="unm-rename unm-rename--ok">
-            ✓ Filename already has a Plex-compatible part suffix — no rename needed
-        </div>`;
+        pairedInfo = {
+            thisFilename:  filename,
+            pairFilename:  pfn,
+            thisPartLabel: extractPartLabel(filename),
+            pairPartLabel: extractPartLabel(pfn),
+        };
+        pairFilenameEncoded = encodeURIComponent(pfn);
     }
 
     return `<div class="unm-file unm-file--detected-part"
                 data-path="${esc(encodeURIComponent(path))}"
                 data-this-part="${thisPartNum}"
                 data-part-format="${partFormat}"
-                ${autoPaired ? 'data-auto-paired="true"' : ""}>
+                data-decision="${esc(decType)}"
+                ${autoPaired ? `data-auto-paired="true" data-pair-filename="${esc(pairFilenameEncoded)}"` : ""}>
         <div class="unm-filename">${esc(filename)}</div>
         ${folder ? `<div class="unm-folder">${esc(folder)}</div>` : ""}
         <div class="unm-row2">
             <div class="unm-chips">${chipRow(item)}</div>
             <div class="unm-eps"><span class="unm-ep-badge unm-ep-part">${esc(partLabel)}</span></div>
         </div>
-        ${validBlock}
-        ${renderDetectedDecisionWrap(dec, epOpts, thisPartNum, autoPaired)}
+        ${renderDetectedDecisionWrap(dec, epOpts, thisPartNum, autoPaired, pairedInfo)}
     </div>`;
 }
 
@@ -474,7 +512,7 @@ function buildPendingCard(item) {
         `S${String(e.seasonNumber).padStart(2,"0")}` +
         `E${String(e.episodeNumber).padStart(2,"0")}</span>`
     ).join("");
-    return `<div class="unm-file unm-file--pending">
+    return `<div class="unm-file unm-file--pending" data-decision="pending">
         <div class="unm-filename">${esc(filename)}</div>
         ${folder ? `<div class="unm-folder">${esc(folder)}</div>` : ""}
         <div class="unm-row2">
@@ -624,6 +662,21 @@ export function showUnmatchedPanel() {
         return card.dataset.autoPaired === "true";
     }
 
+    /** Reconstruct pairedInfo from card data attributes (for event handlers). */
+    function getPairedInfoFromCard(card) {
+        if (!isAutoPairedCard(card)) return null;
+        const encoded = card.dataset.pairFilename;
+        if (!encoded) return null;
+        const pairFilename = decodeURIComponent(encoded);
+        const thisFilename = card.querySelector(".unm-filename")?.textContent ?? "";
+        return {
+            thisFilename,
+            pairFilename,
+            thisPartLabel: extractPartLabel(thisFilename),
+            pairPartLabel: extractPartLabel(pairFilename),
+        };
+    }
+
     // ── Rename preview for UNMATCHED cards (multipart-picking) ────────────────
     function tryUpdateRename(card) {
         const select     = card.querySelector(".unm-pair-ep");
@@ -723,9 +776,11 @@ export function showUnmatchedPanel() {
             const action = actBtn.dataset.action;
 
             if (action === "multipart") {
+                card.dataset.decision = "multipart-picking";
                 swapWrap(card, renderDecisionWrap({ type: "multipart-picking" }, panel._epOpts));
             } else if (action === "det-pair") {
                 const thisPartNum = parseInt(card.dataset.thisPart) || 1;
+                card.dataset.decision = "det-picking";
                 swapWrap(card, renderDetectedDecisionWrap(
                     { type: "det-picking" }, panel._epOpts, thisPartNum, false,
                 ));
@@ -733,10 +788,12 @@ export function showUnmatchedPanel() {
                 // ignore / version / delete / acknowledge
                 const dec = { type: action };
                 if (panel._sid) saveDecision(panel._sid, path, dec);
+                card.dataset.decision = action;
                 if (isDetectedCard(card)) {
                     const thisPartNum = parseInt(card.dataset.thisPart) || 1;
                     swapWrap(card, renderDetectedDecisionWrap(
                         dec, panel._epOpts, thisPartNum, isAutoPairedCard(card),
+                        getPairedInfoFromCard(card),
                     ));
                 } else {
                     swapWrap(card, renderDecisionWrap(dec, panel._epOpts));
@@ -765,8 +822,10 @@ export function showUnmatchedPanel() {
             };
             if (panel._sid) saveDecision(panel._sid, path, dec);
             detPickTemp.delete(path);
+            card.dataset.decision = "det-multipart";
             swapWrap(card, renderDetectedDecisionWrap(
                 dec, panel._epOpts, temp.thisPartN, isAutoPairedCard(card),
+                getPairedInfoFromCard(card),
             ));
             return;
         }
@@ -793,10 +852,14 @@ export function showUnmatchedPanel() {
             detPickTemp.delete(path);
             if (isDetectedCard(card)) {
                 const thisPartNum = parseInt(card.dataset.thisPart) || 1;
+                const autoPaired  = isAutoPairedCard(card);
+                card.dataset.decision = autoPaired ? "auto-paired" : "";
                 swapWrap(card, renderDetectedDecisionWrap(
-                    null, panel._epOpts, thisPartNum, isAutoPairedCard(card),
+                    null, panel._epOpts, thisPartNum, autoPaired,
+                    getPairedInfoFromCard(card),
                 ));
             } else {
+                card.dataset.decision = "";
                 swapWrap(card, renderDecisionWrap(null, panel._epOpts));
             }
             return;
@@ -834,10 +897,27 @@ export function showUnmatchedPanel() {
                     seriesId: spd.series.id,
                     files:    [fileId],
                 });
-                apiBtn.classList.remove("spinning");
-                apiBtn.classList.add("done");
-                apiBtn.textContent = "✓ Done";
+
                 showToast("Sonarr rename triggered — file will be renamed shortly");
+
+                // Update stored decision + re-render without the rename button
+                const card = apiBtn.closest(".unm-file");
+                const path = decodeURIComponent(card?.dataset.path ?? "");
+                if (card && path && panel._sid) {
+                    const allDecs  = loadDecisions(panel._sid);
+                    const curDec   = allDecs[path];
+                    if (curDec) {
+                        const updatedDec = { ...curDec, sonarrRenamed: true };
+                        saveDecision(panel._sid, path, updatedDec);
+                        card.dataset.decision = "det-multipart";
+                        swapWrap(card, renderDetectedDecisionWrap(
+                            updatedDec, panel._epOpts,
+                            parseInt(card.dataset.thisPart) || 1,
+                            isAutoPairedCard(card),
+                            getPairedInfoFromCard(card),
+                        ));
+                    }
+                }
             } catch (err) {
                 apiBtn.classList.remove("spinning");
                 apiBtn.classList.add("error");
