@@ -144,6 +144,48 @@
     &.copied { border-color: #4d4; color: #4d4; background: #0d2010; }
 }
 
+// ── Paired-partner label (auto-paired case) ───────────────────────────────────
+.unm-pair-partner {
+    margin-top: 3px;
+    font-family: monospace;
+    font-size: 10px;
+    color: #2a5a2a;
+    word-break: break-all;
+}
+
+// ── Det-picking preview block ─────────────────────────────────────────────────
+.unm-det-preview {
+    margin-top: 7px;
+    padding: 7px 9px;
+    background: #080e18;
+    border: 1px solid #1a3050;
+    border-radius: 5px;
+    &.unm-rename--hidden { display: none; }
+}
+
+// ── Confirm pairing button ────────────────────────────────────────────────────
+.unm-det-confirm-btn {
+    width: 100%;
+    margin-top: 8px;
+    padding: 6px 0;
+    border-radius: 5px;
+    border: 1px solid #1a2a10;
+    background: #0a140a;
+    color: #3a4a3a;
+    font-size: 11px;
+    font-weight: bold;
+    cursor: default;
+    transition: all .14s;
+
+    &:not([disabled]) {
+        border-color: #3a6a20;
+        background: #0d2008;
+        color: #6c6;
+        cursor: pointer;
+        &:hover { border-color: #5a9; color: #8e8; background: #102a10; }
+    }
+}
+
 // ── API rename button (detected cards — triggers Sonarr rename via API) ───────
 .unm-api-rename-btn {
     flex-shrink: 0;
