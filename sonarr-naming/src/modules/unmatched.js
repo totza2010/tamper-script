@@ -299,6 +299,7 @@ function renderDetectedDecisionWrap(dec, epOpts, thisPartNum, autoPaired = false
                 <div class="unm-decision unm-decision--multipart">
                     <div class="unm-decision-head">
                         <span class="unm-decision-badge">📼 ${esc(pairedInfo.thisPartLabel)} + ${esc(pairedInfo.pairPartLabel)}</span>
+                        <button class="unm-undo-btn" title="Dismiss auto-detection">× undo</button>
                     </div>
                     <div class="unm-rename-lbl" style="margin-top:6px">This file:</div>
                     <div class="unm-rename-row">
@@ -382,19 +383,26 @@ function renderDetectedDecisionWrap(dec, epOpts, thisPartNum, autoPaired = false
             : "";
         const pf = dec.partFormat ?? "pt";
 
-        // After Sonarr rename completed — remove action buttons, show ✓ indicators
+        // After Sonarr rename completed — show ✓ renamed; hide copy btn if this
+        // file was also already renamed to the target name.
         if (dec.sonarrRenamed) {
+            const thisRow = dec.thisRenamed
+                ? `<div class="unm-rename-row">
+                        <span class="unm-rename-target">${esc(dec.thisTargetName)}</span>
+                        <span class="unm-renamed-ok">✓ renamed</span>
+                   </div>`
+                : `<div class="unm-rename-row">
+                        <span class="unm-rename-target">${esc(dec.thisTargetName)}</span>
+                        <button class="unm-copy-btn" data-copy="${esc(dec.thisTargetName)}" title="Copy filename">📋</button>
+                   </div>`;
             return `<div class="unm-decision-wrap">
                 <div class="unm-decision unm-decision--multipart">
                     <div class="unm-decision-head">
                         <span class="unm-decision-badge">📼 ${pf}${dec.thisPartNum}${epTag ? ` of ${epTag}` : ""}</span>
                         <button class="unm-undo-btn">× undo</button>
                     </div>
-                    <div class="unm-rename-lbl" style="margin-top:6px">This file — rename manually:</div>
-                    <div class="unm-rename-row">
-                        <span class="unm-rename-target">${esc(dec.thisTargetName)}</span>
-                        <button class="unm-copy-btn" data-copy="${esc(dec.thisTargetName)}" title="Copy filename">📋</button>
-                    </div>
+                    <div class="unm-rename-lbl" style="margin-top:6px">This file:</div>
+                    ${thisRow}
                     <div class="unm-rename-lbl" style="margin-top:6px">Sonarr file ${pf}${dec.sonarrPartNum}:</div>
                     <div class="unm-rename-row">
                         <span class="unm-rename-target">${esc(dec.sonarrTargetName)}</span>
@@ -610,6 +618,16 @@ export function showUnmatchedPanel() {
                     dec = { ...dec, sonarrRenamed: true };
                     if (sid) saveDecision(sid, iPath, dec);
                 }
+            }
+        }
+
+        // Auto-detect: if this (unmatched) file's current name already matches
+        // the target, mark thisRenamed so the copy button is hidden.
+        if (dec?.type === "det-multipart" && !dec.thisRenamed && dec.thisTargetName) {
+            const { filename: ifn } = splitPath(iPath);
+            if (ifn === dec.thisTargetName) {
+                dec = { ...dec, thisRenamed: true };
+                if (sid) saveDecision(sid, iPath, dec);
             }
         }
 
@@ -865,10 +883,13 @@ export function showUnmatchedPanel() {
             if (isDetectedCard(card)) {
                 const thisPartNum = parseInt(card.dataset.thisPart) || 1;
                 const autoPaired  = isAutoPairedCard(card);
-                card.dataset.decision = autoPaired ? "auto-paired" : "";
+                // Undo on an auto-paired card with no stored decision = dismiss
+                // the auto-detection so the user can handle it manually.
+                // Re-render as a normal non-auto-paired detected card.
+                card.dataset.decision = "";
                 swapWrap(card, renderDetectedDecisionWrap(
-                    null, panel._epOpts, thisPartNum, autoPaired,
-                    getPairedInfoFromCard(card),
+                    null, panel._epOpts, thisPartNum,
+                    /* autoPaired = */ false, null,
                 ));
             } else {
                 card.dataset.decision = "";
