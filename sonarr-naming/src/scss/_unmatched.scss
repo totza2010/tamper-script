@@ -144,6 +144,24 @@
     &.copied { border-color: #4d4; color: #4d4; background: #0d2010; }
 }
 
+// ── API rename button (detected cards — triggers Sonarr rename via API) ───────
+.unm-api-rename-btn {
+    flex-shrink: 0;
+    padding: 3px 8px;
+    border-radius: 5px;
+    border: 1px solid #5a3a00;
+    background: #1e1200;
+    color: #fa0;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all .14s;
+    line-height: 1;
+    &:hover   { border-color: #fa0; background: #2a1a00; }
+    &.done    { border-color: #4d4; color: #4d4; background: #0d2010; cursor: default; }
+    &.error   { border-color: #d44; color: #d44; cursor: default; }
+    &.spinning { opacity: .6; cursor: default; }
+}
+
 // ── Decision wrap ─────────────────────────────────────────────────────────────
 .unm-decision-wrap { margin-top: 8px; }
 

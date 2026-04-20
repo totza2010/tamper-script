@@ -2,6 +2,7 @@
 
 import { getSpData } from "./state.js";
 import { apiReq } from "./api.js";
+import { showToast } from "./utils.js";
 
 // ── Plex multi-part suffixes: cdX, discX, diskX, dvdX, partX, ptX ────────────
 // ref: https://support.plex.tv/articles/200220677-local-media-assets-movies/
@@ -42,29 +43,46 @@ function extractPartNum(filename) {
     return m ? parseInt(m[2]) : null;
 }
 
+/**
+ * Compute a rename target by inserting "-ptN" between {[Custom Formats]} and
+ * {-Release Group} in the Sonarr episode-file name.
+ *
+ * e.g.  `S01E01 - Title - [DVD]-AudioJASubTHEN.mkv`
+ *    →  `S01E01 - Title - [DVD]-pt2-AudioJASubTHEN.mkv`
+ *
+ * Any existing part indicator in the source filename is stripped first so that
+ * a file whose release-group already contains "-part2-" doesn't double-up.
+ *
+ * Falls back to appending "- ptN" when the release group can't be found.
+ */
 function computeTargetName(importedFile, partNum) {
     const { filename } = splitPath(importedFile.relativePath ?? "");
     if (!filename) return null;
     const dot = filename.lastIndexOf(".");
     const ext = dot >= 0 ? filename.slice(dot) : ".mkv";
-    const rawBase = dot >= 0 ? filename.slice(0, dot) : filename;
-    // Strip any existing part indicator from the imported file's base name so that
-    // a file with e.g. "-part2-" in its RG doesn't bleed into the new target name.
-    const base = rawBase
-        .replace(/-(cd|disc|disk|dvd|part|pt)\d+/gi, "")   // remove -partN
-        .replace(/-{2,}/g, "-")                              // collapse double dashes
-        .replace(/-$/, "");                                  // remove trailing dash
-    return `${base} - pt${partNum}${ext}`;
-}
+    let base   = dot >= 0 ? filename.slice(0, dot) : filename;
 
-function buildDetectedRename(item) {
-    // Any file that reaches this function already contains a Plex multi-part
-    // indicator (cd / disc / disk / dvd / part / pt) somewhere in its filename —
-    // that is exactly why it ended up in the "Multi-part detected" section.
-    // Plex recognises the indicator regardless of its position in the name, so
-    // the file is already Plex-compatible and needs no rename.
-    void item; // param kept for call-site compatibility
-    return { alreadyValid: true };
+    // Strip any existing part indicator from the base name
+    base = base
+        .replace(/-(cd|disc|disk|dvd|part|pt)\d+/gi, "")
+        .replace(/-{2,}/g, "-")
+        .replace(/-$/, "");
+
+    // Insert -ptN just before the release-group suffix  ("-RG" at end of base)
+    const rg = importedFile.releaseGroup?.trim();
+    if (rg) {
+        const rgSuffix = `-${rg}`;
+        if (base.endsWith(rgSuffix)) {
+            return `${base.slice(0, base.length - rgSuffix.length)}-pt${partNum}-${rg}${ext}`;
+        }
+        // Case-insensitive fallback
+        if (base.toLowerCase().endsWith(rgSuffix.toLowerCase())) {
+            return `${base.slice(0, base.length - rgSuffix.length)}-pt${partNum}-${rg}${ext}`;
+        }
+    }
+
+    // Last resort: append
+    return `${base} - pt${partNum}${ext}`;
 }
 
 function buildEpisodeOptions(files, epMap) {
@@ -88,7 +106,6 @@ function buildEpisodeOptions(files, epMap) {
 }
 
 // ── Persistent storage (GM_getValue / GM_setValue) ────────────────────────────
-// Decisions survive page reload until the file is no longer in the unmatched list.
 
 const UNM_KEY = sid => `unm_dec_${sid}`;
 
@@ -103,7 +120,6 @@ function clearDecision(sid, path) {
     const all = loadDecisions(sid); delete all[path];
     GM_setValue(UNM_KEY(sid), JSON.stringify(all));
 }
-/** Remove stored decisions whose files are no longer in the unmatched list. */
 function pruneDecisions(sid, activePaths) {
     const all = loadDecisions(sid);
     let dirty = false;
@@ -114,7 +130,7 @@ function pruneDecisions(sid, activePaths) {
     return all;
 }
 
-// ── HTML building blocks ──────────────────────────────────────────────────────
+// ── HTML helpers ──────────────────────────────────────────────────────────────
 
 function esc(s) {
     return String(s ?? "")
@@ -142,17 +158,10 @@ function renameBox(target, hidden = false) {
         </div>`;
 }
 
-/**
- * Render the interactive decision section for an unmatched card.
- *
- * States:
- *   null                    → 4 action buttons
- *   { type:"multipart-picking" } → pairing form (transient, not persisted)
- *   { type:"multipart", episodeFileId, partNum, targetName } → compact badge + rename
- *   { type:"version"|"ignore"|"delete" } → badge + note + undo
- */
+// ── Decision wrap for UNMATCHED cards ─────────────────────────────────────────
+// (No episode match, no Plex part indicator — user classifies manually)
+
 function renderDecisionWrap(dec, epOpts) {
-    // ── No decision yet ───────────────────────────────────────────────────────
     if (!dec) {
         return `<div class="unm-decision-wrap">
             <div class="unm-action-btns">
@@ -164,7 +173,6 @@ function renderDecisionWrap(dec, epOpts) {
         </div>`;
     }
 
-    // ── Picking episode / part (transient) ───────────────────────────────────
     if (dec.type === "multipart-picking") {
         const epOpsHtml = epOpts.map(o =>
             `<option value="${o.fileId}">${esc(o.label)}</option>`
@@ -197,7 +205,6 @@ function renderDecisionWrap(dec, epOpts) {
         </div>`;
     }
 
-    // ── Multi-part confirmed (persisted) ─────────────────────────────────────
     if (dec.type === "multipart") {
         const ep = epOpts.find(o => o.fileId === dec.episodeFileId);
         const epTag = ep
@@ -214,7 +221,6 @@ function renderDecisionWrap(dec, epOpts) {
         </div>`;
     }
 
-    // ── Other decisions ───────────────────────────────────────────────────────
     const CFG = {
         version: { icon: "🔀", label: "Multi-version",  cls: "version",
                    note: "An alternative version of the already-imported episode." },
@@ -234,9 +240,106 @@ function renderDecisionWrap(dec, epOpts) {
     </div>`;
 }
 
+// ── Decision wrap for DETECTED multi-part cards ───────────────────────────────
+// (File already has Plex part indicator — pair with a Sonarr-imported episode)
+
+function renderDetectedDecisionWrap(dec, epOpts, thisPartNum) {
+    // ── No decision: offer "Pair" and "Ignore" ────────────────────────────────
+    if (!dec) {
+        return `<div class="unm-decision-wrap">
+            <div class="unm-action-btns">
+                <button class="unm-act unm-act--part" data-action="det-pair">📼 Pair with episode</button>
+                <button class="unm-act unm-act--ignore" data-action="ignore">👁 Ignore</button>
+            </div>
+        </div>`;
+    }
+
+    // ── Picking episode + part numbers ────────────────────────────────────────
+    if (dec.type === "det-picking") {
+        // Default: if this file is pt1, Sonarr file gets pt2; otherwise pt1
+        const defaultSonarrPart = thisPartNum === 1 ? 2 : 1;
+        const epOpsHtml = epOpts.map(o =>
+            `<option value="${o.fileId}">${esc(o.label)}</option>`
+        ).join("");
+        return `<div class="unm-decision-wrap">
+            <div class="unm-decision unm-decision--multipart">
+                <div class="unm-decision-head">
+                    <span class="unm-decision-badge">📼 Pairing…</span>
+                    <button class="unm-undo-btn" title="Cancel">× cancel</button>
+                </div>
+                <div class="unm-pair-form open">
+                    <div class="unm-pair-field">
+                        <span class="unm-pair-lbl">This file is part:</span>
+                        <div class="unm-part-pills" data-role="this">
+                            ${[1,2,3,4,5].map(n =>
+                                `<button class="unm-part-pill${n === thisPartNum ? " active" : ""}" data-part="${n}">pt${n}</button>`
+                            ).join("")}
+                        </div>
+                    </div>
+                    <div class="unm-pair-field">
+                        <span class="unm-pair-lbl">Belongs to episode:</span>
+                        <select class="unm-pair-ep">
+                            <option value="">— select episode —</option>
+                            ${epOpsHtml}
+                        </select>
+                    </div>
+                    <div class="unm-pair-field">
+                        <span class="unm-pair-lbl">Sonarr file is part:</span>
+                        <div class="unm-part-pills" data-role="sonarr">
+                            ${[1,2,3,4,5].map(n =>
+                                `<button class="unm-part-pill${n === defaultSonarrPart ? " active" : ""}" data-part="${n}">pt${n}</button>`
+                            ).join("")}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    // ── Pairing confirmed ─────────────────────────────────────────────────────
+    if (dec.type === "det-multipart") {
+        const ep = epOpts.find(o => o.fileId === dec.episodeFileId);
+        const epTag = ep
+            ? `S${String(ep.sn).padStart(2,"0")}E${String(ep.ep).padStart(2,"0")}`
+            : "";
+        return `<div class="unm-decision-wrap">
+            <div class="unm-decision unm-decision--multipart">
+                <div class="unm-decision-head">
+                    <span class="unm-decision-badge">📼 pt${dec.thisPartNum}${epTag ? ` of ${epTag}` : ""}</span>
+                    <button class="unm-undo-btn">× undo</button>
+                </div>
+                <div class="unm-rename-lbl" style="margin-top:6px">This file — copy &amp; rename manually:</div>
+                <div class="unm-rename-row">
+                    <span class="unm-rename-target">${esc(dec.thisTargetName)}</span>
+                    <button class="unm-copy-btn" data-copy="${esc(dec.thisTargetName)}" title="Copy filename">📋</button>
+                </div>
+                <div class="unm-rename-lbl" style="margin-top:6px">Sonarr file pt${dec.sonarrPartNum} — rename via API:</div>
+                <div class="unm-rename-row">
+                    <span class="unm-rename-target">${esc(dec.sonarrTargetName)}</span>
+                    <button class="unm-api-rename-btn"
+                        data-fileid="${dec.episodeFileId}"
+                        data-partnum="${dec.sonarrPartNum}"
+                        data-rg="${esc(dec.sonarrOriginalRG ?? "")}"
+                        title="Update release group and trigger Sonarr rename">↺ Rename</button>
+                </div>
+            </div>
+        </div>`;
+    }
+
+    // ── Ignored ───────────────────────────────────────────────────────────────
+    return `<div class="unm-decision-wrap">
+        <div class="unm-decision unm-decision--ignore">
+            <div class="unm-decision-head">
+                <span class="unm-decision-badge">👁 Ignored</span>
+                <button class="unm-undo-btn">× undo</button>
+            </div>
+        </div>
+    </div>`;
+}
+
 // ── Card builders ─────────────────────────────────────────────────────────────
 
-/** Unmatched card — no episode match, no multi-part pattern detected. User classifies. */
+/** Unmatched card — no episode match, no multi-part pattern. User classifies. */
 function buildUnmatchedCard(item, dec, epOpts) {
     const path = item.relativePath ?? item.path ?? "";
     const { filename, folder } = splitPath(path);
@@ -251,33 +354,38 @@ function buildUnmatchedCard(item, dec, epOpts) {
     </div>`;
 }
 
-/** Detected multi-part card — has -partN / ptN / etc. in filename. */
-function buildDetectedCard(item, renameSugg) {
-    const { filename, folder } = splitPath(item.relativePath ?? item.path);
-    const partLabel = extractPartLabel(filename);
+/**
+ * Detected multi-part card — has a Plex part indicator in the filename,
+ * but hasn't been imported by Sonarr.
+ *
+ * Plex already recognises the file (indicator can appear anywhere in the name).
+ * The card shows the "already valid" notice plus a pairing UI so the user can
+ * tell us which Sonarr episode it belongs to and trigger renaming of the
+ * already-imported episode file to add a matching part suffix.
+ */
+function buildDetectedCard(item, dec, epOpts) {
+    const path = item.relativePath ?? item.path ?? "";
+    const { filename, folder } = splitPath(path);
+    const partLabel   = extractPartLabel(filename);
+    const thisPartNum = extractPartNum(filename) ?? 1;
 
-    let renameBlock;
-    if (renameSugg?.alreadyValid) {
-        renameBlock = `<div class="unm-rename unm-rename--ok">
-            ✓ Filename already has a Plex-compatible part suffix — no rename needed
-        </div>`;
-    } else if (renameSugg?.suggested) {
-        renameBlock = renameBox(renameSugg.suggested);
-    } else {
-        renameBlock = `<div class="unm-rename unm-rename--unknown">Episode not yet imported — suggestion unavailable</div>`;
-    }
-    return `<div class="unm-file unm-file--detected-part">
+    return `<div class="unm-file unm-file--detected-part"
+                data-path="${esc(encodeURIComponent(path))}"
+                data-this-part="${thisPartNum}">
         <div class="unm-filename">${esc(filename)}</div>
         ${folder ? `<div class="unm-folder">${esc(folder)}</div>` : ""}
         <div class="unm-row2">
             <div class="unm-chips">${chipRow(item)}</div>
             <div class="unm-eps"><span class="unm-ep-badge unm-ep-part">${esc(partLabel)}</span></div>
         </div>
-        ${renameBlock}
+        <div class="unm-rename unm-rename--ok">
+            ✓ Filename already has a Plex-compatible part suffix — no rename needed
+        </div>
+        ${renderDetectedDecisionWrap(dec, epOpts, thisPartNum)}
     </div>`;
 }
 
-/** Pending card — episode matched, Sonarr hasn't imported yet. */
+/** Pending card — Sonarr matched an episode but hasn't imported yet. */
 function buildPendingCard(item) {
     const { filename, folder } = splitPath(item.relativePath ?? item.path);
     const epBadges = (item.episodes ?? []).map(e =>
@@ -303,7 +411,7 @@ function buildSection(cls, label, cards) {
     </div>`;
 }
 
-// ── API ───────────────────────────────────────────────────────────────────────
+// ── Public API ────────────────────────────────────────────────────────────────
 
 export async function checkUnmatchedFiles() {
     const _spData = getSpData();
@@ -345,9 +453,8 @@ export function showUnmatchedPanel() {
     const epMap    = _spData?.epMap  ?? new Map();
     const sid      = _spData?.series?.id;
 
-    // Prune stale decisions; load remaining
     const activePaths = new Set(items.map(i => i.relativePath ?? i.path ?? "").filter(Boolean));
-    const decisions = sid ? pruneDecisions(sid, activePaths) : {};
+    const decisions   = sid ? pruneDecisions(sid, activePaths) : {};
 
     const panel = document.createElement("div");
     panel.id = "rg-unmatched-panel";
@@ -367,7 +474,8 @@ export function showUnmatchedPanel() {
 
     const unmCards  = unmatched.map(i =>
         buildUnmatchedCard(i, decisions[i.relativePath ?? i.path ?? ""] ?? null, epOpts));
-    const detCards  = detectedPart.map(i => buildDetectedCard(i, buildDetectedRename(i)));
+    const detCards  = detectedPart.map(i =>
+        buildDetectedCard(i, decisions[i.relativePath ?? i.path ?? ""] ?? null, epOpts));
     const pendCards = pending.map(i => buildPendingCard(i));
 
     const summary = [
@@ -406,7 +514,8 @@ export function showUnmatchedPanel() {
     panel.querySelector(".rfp-head-close").addEventListener("click", () => panel.classList.remove("open"));
     panel.querySelector("#unm-close").addEventListener("click",      () => panel.classList.remove("open"));
 
-    // ── Swap decision wrap helper ─────────────────────────────────────────────
+    // ── DOM helpers ───────────────────────────────────────────────────────────
+
     function swapWrap(card, html) {
         const old = card.querySelector(".unm-decision-wrap");
         if (!old) return;
@@ -414,10 +523,16 @@ export function showUnmatchedPanel() {
         old.remove();
     }
 
-    // ── Update rename preview + auto-save when ep + part are both selected ────
+    function isDetectedCard(card) {
+        return card.classList.contains("unm-file--detected-part");
+    }
+
+    // ── Rename preview for UNMATCHED cards (multipart-picking state) ──────────
     function tryUpdateRename(card) {
         const select     = card.querySelector(".unm-pair-ep");
-        const activePill = card.querySelector(".unm-part-pill.active");
+        // Unmatched cards have a single pill group with no data-role
+        const pillGroup  = card.querySelector(".unm-part-pills:not([data-role])");
+        const activePill = pillGroup?.querySelector(".unm-part-pill.active");
         const renameDiv  = card.querySelector(".unm-rename");
         const targetSpan = card.querySelector(".unm-rename-target");
         const btn        = card.querySelector(".unm-copy-btn");
@@ -436,7 +551,6 @@ export function showUnmatchedPanel() {
         if (btn)        btn.dataset.copy = target;
         renameDiv?.classList.remove("unm-rename--hidden");
 
-        // Persist decision
         if (panel._sid) {
             const path = decodeURIComponent(card.dataset.path ?? "");
             saveDecision(panel._sid, path, {
@@ -445,47 +559,146 @@ export function showUnmatchedPanel() {
         }
     }
 
-    // ── Event delegation ──────────────────────────────────────────────────────
-    panel.addEventListener("click", e => {
+    // ── Pairing logic for DETECTED cards (det-picking state) ─────────────────
+    // Auto-confirms once episode + both part selections are set.
+    function tryUpdateDetRename(card) {
+        const select        = card.querySelector(".unm-pair-ep");
+        const thisPills     = card.querySelector(".unm-part-pills[data-role='this']");
+        const sonarrPills   = card.querySelector(".unm-part-pills[data-role='sonarr']");
+        const activeThis    = thisPills?.querySelector(".unm-part-pill.active");
+        const activeSonarr  = sonarrPills?.querySelector(".unm-part-pill.active");
 
-        // Action buttons
+        const fileId        = parseInt(select?.value);
+        const thisPartN     = activeThis   ? parseInt(activeThis.dataset.part)   : null;
+        const sonarrPartN   = activeSonarr ? parseInt(activeSonarr.dataset.part) : null;
+
+        // All three must be set before we confirm
+        if (!fileId || !thisPartN || !sonarrPartN) return;
+
+        const opt = panel._epOpts.find(o => o.fileId === fileId);
+        if (!opt) return;
+
+        const thisTarget   = computeTargetName(opt.file, thisPartN);
+        const sonarrTarget = computeTargetName(opt.file, sonarrPartN);
+        if (!thisTarget || !sonarrTarget) return;
+
+        const dec = {
+            type:             "det-multipart",
+            episodeFileId:    fileId,
+            thisPartNum:      thisPartN,
+            sonarrPartNum:    sonarrPartN,
+            thisTargetName:   thisTarget,
+            sonarrTargetName: sonarrTarget,
+            sonarrOriginalRG: opt.file.releaseGroup ?? "",
+        };
+
+        if (panel._sid) {
+            const path = decodeURIComponent(card.dataset.path ?? "");
+            saveDecision(panel._sid, path, dec);
+        }
+
+        swapWrap(card, renderDetectedDecisionWrap(dec, panel._epOpts, thisPartN));
+    }
+
+    // ── Event delegation ──────────────────────────────────────────────────────
+    panel.addEventListener("click", async e => {
+
+        // ── Action buttons ────────────────────────────────────────────────────
         const actBtn = e.target.closest(".unm-act");
         if (actBtn) {
             const card   = actBtn.closest(".unm-file");
             const path   = decodeURIComponent(card.dataset.path ?? "");
             const action = actBtn.dataset.action;
+
             if (action === "multipart") {
+                // Unmatched card → open multipart-picking form
                 swapWrap(card, renderDecisionWrap({ type: "multipart-picking" }, panel._epOpts));
+            } else if (action === "det-pair") {
+                // Detected card → open det-picking form
+                const thisPartNum = parseInt(card.dataset.thisPart) || 1;
+                swapWrap(card, renderDetectedDecisionWrap({ type: "det-picking" }, panel._epOpts, thisPartNum));
             } else {
+                // version / ignore / delete
                 const dec = { type: action };
                 if (panel._sid) saveDecision(panel._sid, path, dec);
-                swapWrap(card, renderDecisionWrap(dec, panel._epOpts));
+                if (isDetectedCard(card)) {
+                    const thisPartNum = parseInt(card.dataset.thisPart) || 1;
+                    swapWrap(card, renderDetectedDecisionWrap(dec, panel._epOpts, thisPartNum));
+                } else {
+                    swapWrap(card, renderDecisionWrap(dec, panel._epOpts));
+                }
             }
             return;
         }
 
-        // Part number pill
+        // ── Part number pill ──────────────────────────────────────────────────
         const pill = e.target.closest(".unm-part-pill");
         if (pill) {
+            // Deselect only within the same pill group
             pill.closest(".unm-part-pills")
                 .querySelectorAll(".unm-part-pill")
                 .forEach(p => p.classList.remove("active"));
             pill.classList.add("active");
-            tryUpdateRename(pill.closest(".unm-file"));
+            const card = pill.closest(".unm-file");
+            if (isDetectedCard(card)) tryUpdateDetRename(card);
+            else                      tryUpdateRename(card);
             return;
         }
 
-        // Undo / cancel
+        // ── Undo / cancel ─────────────────────────────────────────────────────
         const undoBtn = e.target.closest(".unm-undo-btn");
         if (undoBtn) {
             const card = undoBtn.closest(".unm-file");
             const path = decodeURIComponent(card.dataset.path ?? "");
             if (panel._sid) clearDecision(panel._sid, path);
-            swapWrap(card, renderDecisionWrap(null, panel._epOpts));
+            if (isDetectedCard(card)) {
+                const thisPartNum = parseInt(card.dataset.thisPart) || 1;
+                swapWrap(card, renderDetectedDecisionWrap(null, panel._epOpts, thisPartNum));
+            } else {
+                swapWrap(card, renderDecisionWrap(null, panel._epOpts));
+            }
             return;
         }
 
-        // Copy to clipboard
+        // ── API rename button (detected card) ─────────────────────────────────
+        // Updates the Sonarr episodefile's release group to include "ptN-" prefix,
+        // then triggers a Sonarr RenameFiles command.
+        const apiBtn = e.target.closest(".unm-api-rename-btn");
+        if (apiBtn && !apiBtn.classList.contains("spinning") && !apiBtn.classList.contains("done")) {
+            const fileId  = parseInt(apiBtn.dataset.fileid);
+            const partNum = parseInt(apiBtn.dataset.partnum);
+            const origRG  = apiBtn.dataset.rg ?? "";
+            if (!fileId || !partNum) return;
+
+            apiBtn.classList.add("spinning");
+            apiBtn.textContent = "…";
+
+            try {
+                const spd   = getSpData();
+                // Insert ptN before the release group so Sonarr produces:
+                //   {[Custom Formats]}-ptN-{Release Group}
+                const newRG = origRG ? `pt${partNum}-${origRG}` : `pt${partNum}`;
+                await apiReq("PUT", `/api/v3/episodefile/${fileId}`, { releaseGroup: newRG });
+                await apiReq("POST", "/api/v3/command", {
+                    name:     "RenameFiles",
+                    seriesId: spd.series.id,
+                    files:    [fileId],
+                });
+                apiBtn.classList.remove("spinning");
+                apiBtn.classList.add("done");
+                apiBtn.textContent = "✓ Done";
+                showToast("Sonarr rename triggered — file will be renamed shortly");
+            } catch (err) {
+                apiBtn.classList.remove("spinning");
+                apiBtn.classList.add("error");
+                apiBtn.textContent = "✗ Error";
+                console.warn("[RG Unmatched] API rename failed:", err.message);
+                showToast(`Rename failed: ${err.message}`);
+            }
+            return;
+        }
+
+        // ── Copy to clipboard ─────────────────────────────────────────────────
         const copyBtn = e.target.closest(".unm-copy-btn");
         if (copyBtn?.dataset.copy) {
             navigator.clipboard.writeText(copyBtn.dataset.copy).then(() => {
@@ -505,7 +718,9 @@ export function showUnmatchedPanel() {
     });
 
     panel.addEventListener("change", e => {
-        if (e.target.closest(".unm-pair-ep"))
-            tryUpdateRename(e.target.closest(".unm-file"));
+        const card = e.target.closest(".unm-file");
+        if (!card || !e.target.closest(".unm-pair-ep")) return;
+        if (isDetectedCard(card)) tryUpdateDetRename(card);
+        else                      tryUpdateRename(card);
     });
 }
