@@ -596,12 +596,24 @@ export function showUnmatchedPanel() {
 
     const detCards  = detectedPart.map(i => {
         const pairedFile = detectPairedFile(i, files, epMap);
-        return buildDetectedCard(
-            i,
-            decisions[i.relativePath ?? i.path ?? ""] ?? null,
-            epOpts,
-            pairedFile,
-        );
+        const iPath = i.relativePath ?? i.path ?? "";
+        let dec = decisions[iPath] ?? null;
+
+        // Auto-detect: if the Sonarr file was already renamed (by a previous
+        // session or manually) and its current filename matches the target,
+        // mark sonarrRenamed so the Rename button is not shown.
+        if (dec?.type === "det-multipart" && !dec.sonarrRenamed && dec.sonarrTargetName) {
+            const sonarrFile = files.find(f => f.id === dec.episodeFileId);
+            if (sonarrFile) {
+                const { filename: sfn } = splitPath(sonarrFile.relativePath ?? "");
+                if (sfn === dec.sonarrTargetName) {
+                    dec = { ...dec, sonarrRenamed: true };
+                    if (sid) saveDecision(sid, iPath, dec);
+                }
+            }
+        }
+
+        return buildDetectedCard(i, dec, epOpts, pairedFile);
     });
 
     const pendCards = pending.map(i => buildPendingCard(i));
