@@ -822,7 +822,13 @@ export function showUnmatchedPanel() {
                 // keyword the unmatched file already uses, so Sonarr produces a
                 // consistent name → {[Custom Formats]}-part2-{Release Group}
                 const newRG = origRG ? `${partFormat}${partNum}-${origRG}` : `${partFormat}${partNum}`;
-                await apiReq("PUT", `/api/v3/episodefile/${fileId}`, { releaseGroup: newRG });
+
+                // PUT /api/v3/episodefile/{id} requires the full EpisodeFileResource
+                // (Quality is NOT NULL in the DB).  Fetch the current file first so
+                // we can spread all existing fields and only override releaseGroup.
+                const currentFile = await apiReq("GET", `/api/v3/episodefile/${fileId}`);
+                await apiReq("PUT", `/api/v3/episodefile/${fileId}`, { ...currentFile, releaseGroup: newRG });
+
                 await apiReq("POST", "/api/v3/command", {
                     name:     "RenameFiles",
                     seriesId: spd.series.id,
