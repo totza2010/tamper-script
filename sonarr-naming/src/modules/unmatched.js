@@ -45,28 +45,26 @@ function extractPartNum(filename) {
 function computeTargetName(importedFile, partNum) {
     const { filename } = splitPath(importedFile.relativePath ?? "");
     if (!filename) return null;
-    const dot  = filename.lastIndexOf(".");
-    const base = dot >= 0 ? filename.slice(0, dot) : filename;
-    const ext  = dot >= 0 ? filename.slice(dot)    : ".mkv";
+    const dot = filename.lastIndexOf(".");
+    const ext = dot >= 0 ? filename.slice(dot) : ".mkv";
+    const rawBase = dot >= 0 ? filename.slice(0, dot) : filename;
+    // Strip any existing part indicator from the imported file's base name so that
+    // a file with e.g. "-part2-" in its RG doesn't bleed into the new target name.
+    const base = rawBase
+        .replace(/-(cd|disc|disk|dvd|part|pt)\d+/gi, "")   // remove -partN
+        .replace(/-{2,}/g, "-")                              // collapse double dashes
+        .replace(/-$/, "");                                  // remove trailing dash
     return `${base} - pt${partNum}${ext}`;
 }
 
-function buildDetectedRename(item, files, epMap) {
-    const { filename } = splitPath(item.relativePath ?? item.path ?? "");
-    const parsed = parseSeasonEp(filename);
-    const partN  = extractPartNum(filename);
-    if (!parsed || !partN) return null;
-
-    let importedFile = null;
-    for (const [fileId, episodes] of epMap) {
-        if (episodes.some(e => e.seasonNumber === parsed.sn && e.episodeNumber === parsed.ep)) {
-            importedFile = files.find(f => f.id === fileId) ?? null;
-            break;
-        }
-    }
-    if (!importedFile) return null;
-    const target = computeTargetName(importedFile, partN);
-    return target ? { suggested: target } : null;
+function buildDetectedRename(item) {
+    // Any file that reaches this function already contains a Plex multi-part
+    // indicator (cd / disc / disk / dvd / part / pt) somewhere in its filename —
+    // that is exactly why it ended up in the "Multi-part detected" section.
+    // Plex recognises the indicator regardless of its position in the name, so
+    // the file is already Plex-compatible and needs no rename.
+    void item; // param kept for call-site compatibility
+    return { alreadyValid: true };
 }
 
 function buildEpisodeOptions(files, epMap) {
@@ -257,9 +255,17 @@ function buildUnmatchedCard(item, dec, epOpts) {
 function buildDetectedCard(item, renameSugg) {
     const { filename, folder } = splitPath(item.relativePath ?? item.path);
     const partLabel = extractPartLabel(filename);
-    const renameBlock = renameSugg
-        ? renameBox(renameSugg.suggested)
-        : `<div class="unm-rename unm-rename--unknown">Episode not yet imported — suggestion unavailable</div>`;
+
+    let renameBlock;
+    if (renameSugg?.alreadyValid) {
+        renameBlock = `<div class="unm-rename unm-rename--ok">
+            ✓ Filename already has a Plex-compatible part suffix — no rename needed
+        </div>`;
+    } else if (renameSugg?.suggested) {
+        renameBlock = renameBox(renameSugg.suggested);
+    } else {
+        renameBlock = `<div class="unm-rename unm-rename--unknown">Episode not yet imported — suggestion unavailable</div>`;
+    }
     return `<div class="unm-file unm-file--detected-part">
         <div class="unm-filename">${esc(filename)}</div>
         ${folder ? `<div class="unm-folder">${esc(folder)}</div>` : ""}
@@ -361,7 +367,7 @@ export function showUnmatchedPanel() {
 
     const unmCards  = unmatched.map(i =>
         buildUnmatchedCard(i, decisions[i.relativePath ?? i.path ?? ""] ?? null, epOpts));
-    const detCards  = detectedPart.map(i => buildDetectedCard(i, buildDetectedRename(i, files, epMap)));
+    const detCards  = detectedPart.map(i => buildDetectedCard(i, buildDetectedRename(i)));
     const pendCards = pending.map(i => buildPendingCard(i));
 
     const summary = [
