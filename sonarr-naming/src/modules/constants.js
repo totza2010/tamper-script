@@ -40,6 +40,7 @@ export const EDITIONS = [
     { label: "Remastered", value: "Remastered" },
     { label: "Collector's", value: "Collectors" },
     { label: "Translate", value: "Translate" },
+    { label: "Channel 7 voice", value: "CH7Voice" },
 ];
 
 export const LANGS = [
