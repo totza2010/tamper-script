@@ -8,6 +8,7 @@ import { prefixAlreadyInFilename, buildFixUI, recheckPrefixFiles } from "./prefi
 import { _buildSuggCandidates, buildRGSuggestionUI, recheckRGSuggestions } from "./suggestion.js";
 import { openSettings } from "./settings.js";
 import { checkUnmatchedFiles, showUnmatchedPanel } from "./unmatched.js";
+import { isLibraryPage, initLibraryScan, cleanupLibraryScan } from "./library-scan.js";
 
 // ── Series page orchestration ─────────────────────────────────────────────────
 
@@ -188,9 +189,22 @@ export async function checkSeriesPage() {
 export function watchNavigation() {
     const check = () => {
         if (/^\/series\/[^/]+/.test(location.pathname)) {
+            // ── Series detail page ────────────────────────────────────────────
+            cleanupLibraryScan();
             clearTimeout(watchNavigation._t);
             watchNavigation._t = setTimeout(checkSeriesPage, 600);
+        } else if (isLibraryPage()) {
+            // ── Library page — scan all series for unmatched files ────────────
+            document.getElementById("rg-fix-panel")?.remove();
+            document.getElementById("rg-sugg-panel")?.remove();
+            document.getElementById("rg-unmatched-panel")?.remove();
+            document.getElementById("rg-suggest-btn")?.classList.remove("visible", "has-suggestions");
+            document.getElementById("rg-unmatched-btn")?.classList.remove("visible", "has-unmatched");
+            clearTimeout(watchNavigation._t);
+            watchNavigation._t = setTimeout(initLibraryScan, 800);
         } else {
+            // ── Other pages (settings, calendar, etc.) ────────────────────────
+            cleanupLibraryScan();
             document.getElementById("rg-fix-panel")?.remove();
             document.getElementById("rg-sugg-panel")?.remove();
             document.getElementById("rg-unmatched-panel")?.remove();

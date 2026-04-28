@@ -1,0 +1,72 @@
+// ── Library page — unmatched files scan ──────────────────────────────────────
+
+// ── Badge on series poster card ───────────────────────────────────────────────
+.lib-unm-badge {
+    position: absolute;
+    bottom: 34px;        // sit just above the Sonarr episode progress bar
+    left: 7px;
+    z-index: 10;
+    padding: 2px 8px 2px 6px;
+    border-radius: 10px;
+    background: #b84800;
+    color: #fff;
+    font-size: 11px;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, .55);
+    white-space: nowrap;
+    transition: background .14s;
+    pointer-events: all;
+
+    &::before { content: "📁 "; font-size: 10px; }
+    &:hover   { background: #e05800; }
+}
+
+// Ensure the parent <a> is a positioning context for the badge
+a[href^="/series/"]:has(.lib-unm-badge) {
+    position: relative;
+}
+
+// ── Scan status chip (floating bottom-centre) ─────────────────────────────────
+#lib-scan-chip {
+    position: fixed;
+    bottom: 22px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 6px 16px;
+    border-radius: 16px;
+    font-size: 12px;
+    font-weight: bold;
+    z-index: 11000;
+    white-space: nowrap;
+    pointer-events: all;
+    user-select: none;
+
+    &.lib-scan-chip--scanning {
+        background: #0d1a2a;
+        color: #5ad;
+        border: 1px solid #1a4060;
+        animation: lib-scan-pulse 1.6s ease-in-out infinite;
+        cursor: default;
+    }
+
+    &.lib-scan-chip--warn {
+        background: #2a1000;
+        color: #f90;
+        border: 1px solid #5a2800;
+        cursor: pointer;
+        &:hover { background: #3a1800; border-color: #f90; }
+    }
+
+    &.lib-scan-chip--ok {
+        background: #0d2010;
+        color: #5c5;
+        border: 1px solid #1a4a1a;
+        cursor: pointer;
+    }
+}
+
+@keyframes lib-scan-pulse {
+    0%, 100% { opacity: 1;   }
+    50%       { opacity: .55; }
+}
