@@ -42,28 +42,22 @@ export async function initLibraryScan() {
 
         showChip("scanning", done, total);
 
-        // ── Scan in batches of 4 concurrent requests ──────────────────────────
-        const BATCH = 4;
-        for (let i = 0; i < active.length; i += BATCH) {
-            if (!isLibraryPage()) break;   // user navigated away — stop early
+        // ── Scan all series concurrently ──────────────────────────────────────
+        await Promise.all(active.map(async series => {
+            try {
+                const items = await apiReq("GET",
+                    `/api/v3/manualimport?seriesId=${series.id}` +
+                    `&folder=${encodeURIComponent(series.path)}` +
+                    `&filterExistingFiles=true&sortKey=relativePath&sortDirection=ascending`
+                );
+                const count = items.filter(it => !(it.episodes?.length > 0)).length;
+                _cache.set(series.id, { count, items, series });
+                if (count > 0) injectBadgeForSlug(series.titleSlug, count, series.id);
+            } catch { /* skip failed series silently */ }
 
-            const batch = active.slice(i, i + BATCH);
-            await Promise.all(batch.map(async series => {
-                try {
-                    const items = await apiReq("GET",
-                        `/api/v3/manualimport?seriesId=${series.id}` +
-                        `&folder=${encodeURIComponent(series.path)}` +
-                        `&filterExistingFiles=true&sortKey=relativePath&sortDirection=ascending`
-                    );
-                    const count = items.filter(it => !(it.episodes?.length > 0)).length;
-                    _cache.set(series.id, { count, items, series });
-                    if (count > 0) injectBadgeForSlug(series.titleSlug, count, series.id);
-                } catch { /* skip failed series silently */ }
-
-                done++;
-                showChip("scanning", done, total);
-            }));
-        }
+            done++;
+            showChip("scanning", done, total);
+        }));
 
         _scanDone = true;
         _scanning = false;
