@@ -152,7 +152,7 @@ export async function checkSeriesPage() {
             if (!result) return;
             updateCacheEntry(result.series, result.count, result.allHandled);
             if (result.count > 0) {
-                showSeriesAlert(result.series, result.count, result.allHandled);
+                showSeriesAlert(result.series, result.count, result.allHandled, _autoRecheck);
             }
         });
 
@@ -195,9 +195,62 @@ export async function checkSeriesPage() {
     } catch (e) { console.warn("[RG Fix]", e.message); }
 }
 
+// ── Auto-recheck after Sonarr mutates episode data ────────────────────────────
+// Intercepts fetch() once; any PUT/POST/DELETE to /api/v3/ while on a series
+// page schedules a re-run of checkUnmatchedFiles() after a short settle delay.
+
+let _recheckTimer    = null;
+let _recheckBusy     = false;
+
+async function _autoRecheck() {
+    if (_recheckBusy) return;
+    _recheckBusy = true;
+    try {
+        const result = await checkUnmatchedFiles();
+        if (!result) return;
+        updateCacheEntry(result.series, result.count, result.allHandled);
+        if (result.count > 0) {
+            showSeriesAlert(result.series, result.count, result.allHandled, _autoRecheck);
+        } else {
+            hideSeriesAlert();
+        }
+    } catch { /* ignore */ }
+    finally { _recheckBusy = false; }
+}
+
+function _installFetchWatcher() {
+    if (_installFetchWatcher._done) return;
+    _installFetchWatcher._done = true;
+
+    const origFetch = window.fetch;
+    window.fetch = function (input, init, ...rest) {
+        const p = origFetch.call(this, input, init, ...rest);
+        // Side-effect only — never block or modify the response
+        p.then(() => {
+            try {
+                const method = (init?.method ?? "GET").toUpperCase();
+                const url    = typeof input === "string" ? input
+                             : (input instanceof URL   ? input.href
+                             : input?.url ?? "");
+                if (
+                    ["PUT", "POST", "DELETE"].includes(method) &&
+                    /\/api\/v3\//.test(url) &&
+                    /^\/series\/[^/]+/.test(location.pathname)
+                ) {
+                    clearTimeout(_recheckTimer);
+                    // 3 s settle — enough for Sonarr to process most commands
+                    _recheckTimer = setTimeout(_autoRecheck, 3000);
+                }
+            } catch { /* ignore */ }
+        });
+        return p;
+    };
+}
+
 export function watchNavigation() {
     // ── One-time global init: create FAB + load library cache ─────────────────
     initLibraryFab();
+    _installFetchWatcher();
 
     const check = () => {
         hideSeriesAlert();   // always clear the series alert on any navigation

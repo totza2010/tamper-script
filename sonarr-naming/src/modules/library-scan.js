@@ -71,7 +71,8 @@ export function updateCacheEntry(series, count, allHandled = false) {
 }
 
 // ── Alert toast — floating top-centre on series pages ────────────────────────
-export function showSeriesAlert(series, count, allHandled) {
+// onRecheck: optional callback — wired to the ↺ Re-check button
+export function showSeriesAlert(series, count, allHandled, onRecheck) {
     hideSeriesAlert();
 
     const isYellow = allHandled;
@@ -91,7 +92,7 @@ export function showSeriesAlert(series, count, allHandled) {
         zIndex:        "99999",
         display:       "flex",
         alignItems:    "center",
-        gap:           "12px",
+        gap:           "10px",
         padding:       "11px 16px 11px 18px",
         borderRadius:  "10px",
         fontFamily:    "sans-serif",
@@ -107,18 +108,30 @@ export function showSeriesAlert(series, count, allHandled) {
         animation:     "lib-alert-drop .22s cubic-bezier(.2,.8,.3,1) both",
     });
 
+    const btnBase = `padding:3px 10px; border-radius:6px; cursor:pointer;
+        border:1px solid currentColor; background:transparent;
+        color:inherit; font-size:11px; font-weight:bold;`;
+
     bar.innerHTML = `
         <span>${label}</span>
-        <button id="lib-alert-view" style="
-            padding:3px 11px; border-radius:6px; cursor:pointer;
-            border:1px solid currentColor; background:transparent;
-            color:inherit; font-size:11px; font-weight:bold;">View files ↗</button>
+        <button id="lib-alert-view" style="${btnBase}">View files ↗</button>
+        ${onRecheck ? `<button id="lib-alert-recheck" style="${btnBase}">↺ Re-check</button>` : ""}
         <button id="lib-alert-close" title="Dismiss" style="
             padding:2px 7px; border:none; background:transparent;
             color:#789; font-size:15px; cursor:pointer; line-height:1;">✕</button>`;
 
-    bar.querySelector("#lib-alert-view").addEventListener("click",  () => showUnmatchedPanel());
+    bar.querySelector("#lib-alert-view").addEventListener("click", () => showUnmatchedPanel());
     bar.querySelector("#lib-alert-close").addEventListener("click", () => hideSeriesAlert());
+
+    if (onRecheck) {
+        const recheckBtn = bar.querySelector("#lib-alert-recheck");
+        recheckBtn.addEventListener("click", async () => {
+            recheckBtn.textContent = "↺ Checking…";
+            recheckBtn.disabled    = true;
+            await onRecheck();
+            // onRecheck calls showSeriesAlert again (or hideSeriesAlert) — this bar is replaced
+        });
+    }
 
     document.body.appendChild(bar);
 }
