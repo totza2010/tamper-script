@@ -70,24 +70,55 @@ export function updateCacheEntry(series, count, allHandled = false) {
     _refreshPanelRow(series.id, count, series.title, series.titleSlug);
 }
 
-// ── Alert bar shown on series pages that are in the cache ────────────────────
+// ── Alert toast — floating top-centre on series pages ────────────────────────
 export function showSeriesAlert(series, count, allHandled) {
     hideSeriesAlert();
-    const bar = document.createElement("div");
-    bar.id        = "lib-scan-alert";
-    bar.className = `lib-scan-alert ${allHandled ? "lib-scan-alert--yellow" : "lib-scan-alert--red"}`;
 
-    const label = allHandled
+    const isYellow = allHandled;
+    const label = isYellow
         ? `📁 ${count} unmatched file${count !== 1 ? "s" : ""} — all classified (multi / ignore)`
-        : `📁 ${count} unmatched file${count !== 1 ? "s" : ""} with no match in this series`;
+        : `📁 ${count} unmatched file${count !== 1 ? "s" : ""} with no episode match`;
+
+    const bar = document.createElement("div");
+    bar.id = "lib-scan-alert";
+
+    // ── Inline styles — override everything, guaranteed above Sonarr's CSS ────
+    Object.assign(bar.style, {
+        position:      "fixed",
+        top:           "72px",
+        left:          "50%",
+        transform:     "translateX(-50%)",
+        zIndex:        "99999",
+        display:       "flex",
+        alignItems:    "center",
+        gap:           "12px",
+        padding:       "11px 16px 11px 18px",
+        borderRadius:  "10px",
+        fontFamily:    "sans-serif",
+        fontSize:      "13px",
+        fontWeight:    "500",
+        whiteSpace:    "nowrap",
+        boxShadow:     "0 6px 24px rgba(0,0,0,.7), 0 2px 8px rgba(0,0,0,.5)",
+        background:    isYellow ? "#1e1600" : "#220808",
+        border:        isYellow ? "1px solid #906000" : "1px solid #b01818",
+        color:         isYellow ? "#e8c84a" : "#f09090",
+        pointerEvents: "all",
+        userSelect:    "none",
+        animation:     "lib-alert-drop .22s cubic-bezier(.2,.8,.3,1) both",
+    });
 
     bar.innerHTML = `
-        <span class="lib-alert-msg">${label}</span>
-        <button class="lib-alert-view-btn">View files ↗</button>
-        <button class="lib-alert-close" title="Dismiss">✕</button>`;
+        <span>${label}</span>
+        <button id="lib-alert-view" style="
+            padding:3px 11px; border-radius:6px; cursor:pointer;
+            border:1px solid currentColor; background:transparent;
+            color:inherit; font-size:11px; font-weight:bold;">View files ↗</button>
+        <button id="lib-alert-close" title="Dismiss" style="
+            padding:2px 7px; border:none; background:transparent;
+            color:#789; font-size:15px; cursor:pointer; line-height:1;">✕</button>`;
 
-    bar.querySelector(".lib-alert-view-btn").addEventListener("click", () => showUnmatchedPanel());
-    bar.querySelector(".lib-alert-close").addEventListener("click",    () => hideSeriesAlert());
+    bar.querySelector("#lib-alert-view").addEventListener("click",  () => showUnmatchedPanel());
+    bar.querySelector("#lib-alert-close").addEventListener("click", () => hideSeriesAlert());
 
     document.body.appendChild(bar);
 }
