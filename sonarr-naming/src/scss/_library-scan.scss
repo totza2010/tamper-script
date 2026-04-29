@@ -214,32 +214,40 @@ a[href^="/series/"]:has(.lib-unm-badge) {
     position: relative;
 }
 
-// ── Series-page alert bar ─────────────────────────────────────────────────────
+// ── Series-page alert toast (top-centre, floating) ───────────────────────────
 #lib-scan-alert {
     position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    z-index: 9500;
+    top: 70px;                  // below Sonarr's fixed top nav (~57 px)
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 11000;             // above panel (10000) and nav
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 9px 16px;
+    padding: 10px 14px 10px 16px;
+    border-radius: 8px;
     font-family: sans-serif;
     font-size: 12px;
     font-weight: 500;
-    box-shadow: 0 -3px 12px rgba(0, 0, 0, .5);
+    white-space: nowrap;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, .65);
+    animation: lib-alert-drop .2s ease;
 
     &.lib-scan-alert--red {
-        background: #2a0808;
-        border-top: 2px solid #c02020;
+        background: #2e0a0a;
+        border: 1px solid #c02020;
         color: #f8b0b0;
     }
     &.lib-scan-alert--yellow {
         background: #201800;
-        border-top: 2px solid #a07000;
+        border: 1px solid #a07000;
         color: #f0d080;
     }
+}
+
+@keyframes lib-alert-drop {
+    from { top: 55px; opacity: 0; }
+    to   { top: 70px; opacity: 1; }
 }
 
 .lib-alert-msg {
@@ -263,7 +271,7 @@ a[href^="/series/"]:has(.lib-unm-badge) {
 
 .lib-alert-close {
     flex-shrink: 0;
-    padding: 2px 7px;
+    padding: 2px 6px;
     border-radius: 4px;
     border: none;
     background: transparent;
