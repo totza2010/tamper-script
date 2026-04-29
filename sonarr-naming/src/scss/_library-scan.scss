@@ -1,12 +1,161 @@
 // ── Library page — unmatched files scan ──────────────────────────────────────
 
-// ── Badge on series poster card ───────────────────────────────────────────────
+// ── Slide-in panel (same pattern as #rg-unmatched-panel) ─────────────────────
+#lib-scan-panel {
+    position: fixed;
+    top: 0;
+    right: -500px;
+    width: 420px;
+    height: 100vh;
+    background: #12121e;
+    border-left: 1px solid #3a2000;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    box-shadow: -8px 0 32px rgba(0, 0, 0, .65);
+    font-family: sans-serif;
+    font-size: 13px;
+    color: #e0e0e0;
+    transition: right .25s ease;
+    overflow: hidden;
+
+    &.open { right: 0; }
+}
+
+// ── Header ────────────────────────────────────────────────────────────────────
+.lsp-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px 11px;
+    border-bottom: 1px solid #3a2000;
+    flex-shrink: 0;
+}
+.lsp-title {
+    font-size: 13px;
+    font-weight: bold;
+    color: #f80;
+}
+.lsp-head-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.lsp-rescan-btn {
+    padding: 3px 10px;
+    border-radius: 5px;
+    border: 1px solid #3a2800;
+    background: #1e1200;
+    color: #f80;
+    font-size: 11px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all .14s;
+    &:hover { border-color: #f80; background: #2a1800; }
+}
+.lsp-close {
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid #2a2a40;
+    background: transparent;
+    color: #567;
+    font-size: 13px;
+    cursor: pointer;
+    line-height: 1;
+    transition: all .12s;
+    &:hover { border-color: #556; color: #aab; }
+}
+
+// ── Subhead (status line) ─────────────────────────────────────────────────────
+.lsp-subhead {
+    padding: 7px 14px;
+    font-size: 11px;
+    border-bottom: 1px solid #1a1a2e;
+    flex-shrink: 0;
+    min-height: 30px;
+
+    &.lsp-subhead--scanning {
+        color: #5ad;
+        animation: lsp-pulse 1.5s ease-in-out infinite;
+    }
+    &.lsp-subhead--warn { color: #f90; }
+    &.lsp-subhead--ok   { color: #5c5; }
+}
+
+@keyframes lsp-pulse {
+    0%, 100% { opacity: 1;   }
+    50%       { opacity: .5; }
+}
+
+// ── Body ──────────────────────────────────────────────────────────────────────
+.lsp-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 10px 14px;
+}
+
+// ── Series list ───────────────────────────────────────────────────────────────
+.lsp-list {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.lsp-series-btn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: 1px solid #3a1800;
+    background: #0f0800;
+    color: #e0d0c0;
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+    transition: all .14s;
+    gap: 10px;
+
+    &:hover {
+        border-color: #f80;
+        background: #1a0e00;
+        color: #fff;
+
+        .lsp-series-count { color: #f80; }
+    }
+}
+.lsp-series-title {
+    flex: 1;
+    font-weight: 500;
+    line-height: 1.3;
+    word-break: break-word;
+}
+.lsp-series-count {
+    flex-shrink: 0;
+    font-size: 11px;
+    font-weight: bold;
+    color: #a06030;
+    white-space: nowrap;
+    transition: color .14s;
+}
+
+// ── Empty state ───────────────────────────────────────────────────────────────
+.lsp-empty {
+    color: #567;
+    font-size: 12px;
+    text-align: center;
+    padding: 24px 0;
+    margin: 0;
+}
+
+// ── Badge on series poster cards ──────────────────────────────────────────────
 .lib-unm-badge {
     position: absolute;
-    bottom: 34px;        // sit just above the Sonarr episode progress bar
+    bottom: 34px;
     left: 7px;
     z-index: 10;
-    padding: 2px 8px 2px 6px;
+    padding: 2px 7px 2px 6px;
     border-radius: 10px;
     background: #b84800;
     color: #fff;
@@ -22,51 +171,7 @@
     &:hover   { background: #e05800; }
 }
 
-// Ensure the parent <a> is a positioning context for the badge
+// Positioning context for the badge
 a[href^="/series/"]:has(.lib-unm-badge) {
     position: relative;
-}
-
-// ── Scan status chip (floating bottom-centre) ─────────────────────────────────
-#lib-scan-chip {
-    position: fixed;
-    bottom: 22px;
-    left: 50%;
-    transform: translateX(-50%);
-    padding: 6px 16px;
-    border-radius: 16px;
-    font-size: 12px;
-    font-weight: bold;
-    z-index: 11000;
-    white-space: nowrap;
-    pointer-events: all;
-    user-select: none;
-
-    &.lib-scan-chip--scanning {
-        background: #0d1a2a;
-        color: #5ad;
-        border: 1px solid #1a4060;
-        animation: lib-scan-pulse 1.6s ease-in-out infinite;
-        cursor: default;
-    }
-
-    &.lib-scan-chip--warn {
-        background: #2a1000;
-        color: #f90;
-        border: 1px solid #5a2800;
-        cursor: pointer;
-        &:hover { background: #3a1800; border-color: #f90; }
-    }
-
-    &.lib-scan-chip--ok {
-        background: #0d2010;
-        color: #5c5;
-        border: 1px solid #1a4a1a;
-        cursor: pointer;
-    }
-}
-
-@keyframes lib-scan-pulse {
-    0%, 100% { opacity: 1;   }
-    50%       { opacity: .55; }
 }
