@@ -163,33 +163,8 @@
     &.unm-rename--hidden { display: none; }
 }
 
-// ── Confirm pairing button ────────────────────────────────────────────────────
-.unm-det-confirm-btn {
-    width: 100%;
-    margin-top: 8px;
-    padding: 7px 0;
-    border-radius: 5px;
-    border: 1px solid #1a2a10;
-    background: #0a140a;
-    color: #3a4a3a;
-    font-size: 12px;
-    font-weight: bold;
-    cursor: default;
-    transition: all .14s;
-
-    &:not([disabled]) {
-        border-color: #3a6a20;
-        background: #0d2008;
-        color: #6c6;
-        cursor: pointer;
-        &:hover { border-color: #5a9; color: #8e8; background: #102a10; }
-    }
-}
-
-// ── API rename button (detected cards — triggers Sonarr rename via API) ───────
-// Also used for version cards (.unm-api-ver-rename-btn)
-.unm-api-rename-btn,
-.unm-api-ver-rename-btn {
+// ── API rename button — triggers Sonarr rename via API ───────────────────────
+.unm-api-pair-rename-btn {
     flex-shrink: 0;
     padding: 4px 10px;
     border-radius: 5px;
@@ -292,8 +267,7 @@
     color: #3a5070;
     margin-bottom: 5px;
 }
-.unm-pair-ep,
-.unm-ver-ep {
+.unm-pair-ep {
     width: 100%;
     padding: 6px 9px;
     background: #0d1a2a;
@@ -305,8 +279,7 @@
     cursor: pointer;
     &:focus { border-color: #4ad; }
 }
-.unm-part-pills,
-.unm-ver-pills  { display: flex; gap: 5px; flex-wrap: wrap; }
+.unm-part-pills { display: flex; gap: 5px; flex-wrap: wrap; }
 .unm-part-pill {
     padding: 4px 13px;
     border-radius: 11px;
@@ -323,8 +296,8 @@
     &.active { border-color: #4ad; color: #4ef; background: #0d2030; }
 }
 
-// ── Version confirm button (same style as det-confirm-btn) ───────────────────
-.unm-ver-confirm-btn {
+// ── Unified pair confirm button ───────────────────────────────────────────────
+.unm-pair-confirm-btn {
     width: 100%;
     margin-top: 8px;
     padding: 7px 0;
