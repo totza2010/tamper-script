@@ -4,7 +4,7 @@
     position: fixed;
     top: 0;
     right: -500px;
-    width: 460px;
+    width: 480px;
     height: 100vh;
     background: #12121e;
     border-left: 1px solid #3a2000;
@@ -13,7 +13,7 @@
     flex-direction: column;
     box-shadow: -8px 0 32px rgba(0, 0, 0, .65);
     font-family: sans-serif;
-    font-size: 13px;
+    font-size: 14px;
     color: #e0e0e0;
     transition: right .25s ease;
     overflow: hidden;
@@ -29,9 +29,9 @@
     margin-bottom: 10px;
 }
 .unm-hcount {
-    padding: 3px 10px;
-    border-radius: 10px;
-    font-size: 11px;
+    padding: 4px 12px;
+    border-radius: 11px;
+    font-size: 12px;
     font-weight: bold;
     &.unm-hcount--warn { background: #2a1000; color: #f80;  border: 1px solid #5a2800; }
     &.unm-hcount--part { background: #0d1a2a; color: #5ad;  border: 1px solid #1a3a55; }
@@ -41,11 +41,11 @@
 // ── Sections ──────────────────────────────────────────────────────────────────
 .unm-section        { margin-bottom: 14px; }
 .unm-section-lbl {
-    font-size: 10px;
+    font-size: 11px;
     text-transform: uppercase;
     letter-spacing: .07em;
     font-weight: bold;
-    margin-bottom: 6px;
+    margin-bottom: 7px;
     padding-left: 2px;
 }
 .unm-section--problem  .unm-section-lbl { color: #f80; }
@@ -58,7 +58,7 @@
 .unm-file {
     background: #0d0d1e;
     border-bottom: 1px solid #1a1a2e;
-    padding: 9px 11px;
+    padding: 10px 13px;
     &:last-child { border-bottom: none; }
 }
 .unm-file--pairable      { border-left: 3px solid #7a3000; background: #0f0800; }
@@ -68,34 +68,34 @@
 // File info
 .unm-filename {
     font-family: monospace;
-    font-size: 11px;
+    font-size: 12px;
     color: #ccd;
     word-break: break-all;
     line-height: 1.45;
-    margin-bottom: 2px;
+    margin-bottom: 3px;
 }
 .unm-folder {
     font-family: monospace;
-    font-size: 9px;
+    font-size: 10px;
     color: #3a4055;
     word-break: break-all;
-    margin-bottom: 5px;
+    margin-bottom: 6px;
 }
 .unm-row2 { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .unm-chips { display: flex; gap: 5px; }
 .unm-chip {
-    padding: 2px 8px;
+    padding: 3px 9px;
     border-radius: 10px;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: bold;
     &.unm-chip-size    { background: #1a1a2e; color: #567;  border: 1px solid #2a2a40; }
     &.unm-chip-quality { background: #0d1e2a; color: #5ad;  border: 1px solid #1a3a50; }
 }
 .unm-eps { display: flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
 .unm-ep-badge {
-    padding: 2px 8px;
+    padding: 3px 9px;
     border-radius: 10px;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: bold;
     &.unm-ep-match { background: #0d2010; color: #5c5;  border: 1px solid #2a5a2a; }
     &.unm-ep-none  { background: #1e0e00; color: #f80;  border: 1px solid #5a2800; }
@@ -114,24 +114,24 @@
     &.unm-rename--ok      { color: #5c5; font-size: 10px; border-color: #1a4a1a; background: #060e06; }
 }
 .unm-rename-lbl {
-    font-size: 9px;
+    font-size: 10px;
     text-transform: uppercase;
     letter-spacing: .07em;
     color: #3a5070;
-    margin-bottom: 4px;
+    margin-bottom: 5px;
 }
 .unm-rename-row    { display: flex; align-items: center; gap: 6px; }
 .unm-rename-target {
     flex: 1;
     font-family: monospace;
-    font-size: 10px;
+    font-size: 11px;
     color: #7bc;
     word-break: break-all;
     line-height: 1.4;
 }
 .unm-copy-btn {
     flex-shrink: 0;
-    padding: 3px 8px;
+    padding: 4px 10px;
     border-radius: 5px;
     border: 1px solid #1a3a55;
     background: #0d1e30;
@@ -167,12 +167,12 @@
 .unm-det-confirm-btn {
     width: 100%;
     margin-top: 8px;
-    padding: 6px 0;
+    padding: 7px 0;
     border-radius: 5px;
     border: 1px solid #1a2a10;
     background: #0a140a;
     color: #3a4a3a;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: bold;
     cursor: default;
     transition: all .14s;
@@ -189,7 +189,7 @@
 // ── API rename button (detected cards — triggers Sonarr rename via API) ───────
 .unm-api-rename-btn {
     flex-shrink: 0;
-    padding: 3px 8px;
+    padding: 4px 10px;
     border-radius: 5px;
     border: 1px solid #5a3a00;
     background: #1e1200;
@@ -214,12 +214,12 @@
     gap: 5px;
 }
 .unm-act {
-    padding: 6px 8px;
+    padding: 7px 8px;
     border-radius: 5px;
     border: 1px solid #2a2a40;
     background: #0d0d1e;
     color: #667;
-    font-size: 11px;
+    font-size: 12px;
     cursor: pointer;
     text-align: center;
     transition: all .14s;
@@ -251,7 +251,7 @@
     margin-bottom: 2px;
 }
 .unm-decision-badge {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: bold;
     .unm-decision--multipart & { color: #5ad; }
     .unm-decision--version   & { color: #6a6; }
@@ -259,18 +259,18 @@
     .unm-decision--delete    & { color: #c44; }
 }
 .unm-undo-btn {
-    padding: 2px 7px;
+    padding: 3px 8px;
     border-radius: 4px;
     border: 1px solid #2a2a40;
     background: transparent;
     color: #456;
-    font-size: 10px;
+    font-size: 11px;
     cursor: pointer;
     transition: all .12s;
     &:hover { border-color: #556; color: #889; }
 }
 .unm-decision-note {
-    font-size: 10px;
+    font-size: 11px;
     color: #567;
     margin-top: 4px;
 }
@@ -284,32 +284,32 @@
 .unm-pair-field { margin-bottom: 7px; &:last-child { margin-bottom: 0; } }
 .unm-pair-lbl {
     display: block;
-    font-size: 9px;
+    font-size: 10px;
     text-transform: uppercase;
     letter-spacing: .07em;
     color: #3a5070;
-    margin-bottom: 4px;
+    margin-bottom: 5px;
 }
 .unm-pair-ep {
     width: 100%;
-    padding: 5px 8px;
+    padding: 6px 9px;
     background: #0d1a2a;
     border: 1px solid #2a3a50;
     border-radius: 5px;
     color: #aac;
-    font-size: 11px;
+    font-size: 12px;
     outline: none;
     cursor: pointer;
     &:focus { border-color: #4ad; }
 }
 .unm-part-pills { display: flex; gap: 5px; flex-wrap: wrap; }
 .unm-part-pill {
-    padding: 3px 12px;
-    border-radius: 10px;
+    padding: 4px 13px;
+    border-radius: 11px;
     border: 1px solid #2a3a50;
     background: #0d1a2a;
     color: #567;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: bold;
     cursor: pointer;
     transition: all .14s;
@@ -367,4 +367,4 @@
 }
 
 // ── Empty state ───────────────────────────────────────────────────────────────
-.unm-empty { color: #567; font-size: 12px; text-align: center; padding: 20px 0; }
+.unm-empty { color: #567; font-size: 13px; text-align: center; padding: 20px 0; }

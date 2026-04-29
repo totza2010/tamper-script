@@ -10,7 +10,7 @@ import { openSettings } from "./settings.js";
 import { checkUnmatchedFiles, showUnmatchedPanel } from "./unmatched.js";
 import {
     isLibraryPage, initLibraryFab, initLibraryScan, cleanupLibraryScan,
-    updateCacheEntry, showSeriesAlert, hideSeriesAlert,
+    updateCacheEntry, showSeriesAlert, hideSeriesAlert, registerSeriesMutationWatch,
 } from "./library-scan.js";
 
 // ── Series page orchestration ─────────────────────────────────────────────────
@@ -196,11 +196,11 @@ export async function checkSeriesPage() {
 }
 
 // ── Auto-recheck after Sonarr mutates episode data ────────────────────────────
-// Intercepts fetch() once; any PUT/POST/DELETE to /api/v3/ while on a series
-// page schedules a re-run of checkUnmatchedFiles() after a short settle delay.
+// Registered with the unified fetch watcher in library-scan.js.
+// Called when any PUT/POST/DELETE hits /api/v3/ while on a series page.
 
-let _recheckTimer    = null;
-let _recheckBusy     = false;
+let _recheckTimer = null;
+let _recheckBusy  = false;
 
 async function _autoRecheck() {
     if (_recheckBusy) return;
@@ -218,39 +218,19 @@ async function _autoRecheck() {
     finally { _recheckBusy = false; }
 }
 
-function _installFetchWatcher() {
-    if (_installFetchWatcher._done) return;
-    _installFetchWatcher._done = true;
-
-    const origFetch = window.fetch;
-    window.fetch = function (input, init, ...rest) {
-        const p = origFetch.call(this, input, init, ...rest);
-        // Side-effect only — never block or modify the response
-        p.then(() => {
-            try {
-                const method = (init?.method ?? "GET").toUpperCase();
-                const url    = typeof input === "string" ? input
-                             : (input instanceof URL   ? input.href
-                             : input?.url ?? "");
-                if (
-                    ["PUT", "POST", "DELETE"].includes(method) &&
-                    /\/api\/v3\//.test(url) &&
-                    /^\/series\/[^/]+/.test(location.pathname)
-                ) {
-                    clearTimeout(_recheckTimer);
-                    // 3 s settle — enough for Sonarr to process most commands
-                    _recheckTimer = setTimeout(_autoRecheck, 3000);
-                }
-            } catch { /* ignore */ }
-        });
-        return p;
-    };
+// Debounced wrapper — the unified watcher fires on every mutation;
+// we coalesce rapid-fire events (e.g. episode rematch) into one recheck.
+function _scheduleRecheck() {
+    clearTimeout(_recheckTimer);
+    _recheckTimer = setTimeout(_autoRecheck, 3000);
 }
 
 export function watchNavigation() {
     // ── One-time global init: create FAB + load library cache ─────────────────
     initLibraryFab();
-    _installFetchWatcher();
+    // Register the series-page mutation handler with the unified fetch watcher
+    // (library-scan.js already installed the watcher in initLibraryFab)
+    registerSeriesMutationWatch(_scheduleRecheck);
 
     const check = () => {
         hideSeriesAlert();   // always clear the series alert on any navigation

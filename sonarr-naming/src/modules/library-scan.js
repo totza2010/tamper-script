@@ -31,13 +31,88 @@ function loadCache() {
 
 // ── Runtime state ─────────────────────────────────────────────────────────────
 const _cache  = new Map();
-let _scanTime = null;
-let _scanning = false;
-let _done     = 0;
-let _total    = 0;
+let _scanTime        = null;
+let _scanning        = false;
+let _done            = 0;
+let _total           = 0;
+let _totalSeriesCount = 0;   // total series in Sonarr (shown in subhead)
 
 let _badgeObs      = null;
 let _badgeDebounce = null;
+
+// ── Unified fetch watcher ─────────────────────────────────────────────────────
+// Intercepts window.fetch once and dispatches to registered handlers.
+
+const _mutationWatchers = new Set();   // callbacks registered by other modules
+let   _fetchInstalled   = false;
+let   _newSeriesTimer   = null;
+
+export function registerSeriesMutationWatch(fn) {
+    _mutationWatchers.add(fn);
+    _installFetchWatcher();
+}
+
+function _installFetchWatcher() {
+    if (_fetchInstalled) return;
+    _fetchInstalled = true;
+
+    const origFetch = window.fetch;
+    window.fetch = function (input, init, ...rest) {
+        const p = origFetch.call(this, input, init, ...rest);
+        p.then(async res => {
+            try {
+                const method = (init?.method ?? "GET").toUpperCase();
+                const url    = typeof input === "string" ? input
+                             : (input instanceof URL   ? input.href
+                             : input?.url ?? "");
+
+                if (!["PUT", "POST", "DELETE"].includes(method)) return;
+                if (!/\/api\/v3\//.test(url))                     return;
+
+                // ── New series added → auto-scan just that series ─────────────
+                if (method === "POST" && /\/api\/v3\/series$/.test(url)) {
+                    try {
+                        const clone = res.clone();
+                        const data  = await clone.json();
+                        if (data?.id) {
+                            clearTimeout(_newSeriesTimer);
+                            // wait 8 s for Sonarr to finish initial scan
+                            _newSeriesTimer = setTimeout(() => _scanSingleSeries(data), 8000);
+                        }
+                    } catch { /* ignore parse errors */ }
+                    return;
+                }
+
+                // ── Sonarr scheduled-scan / rescan command ────────────────────
+                if (method === "POST" && /\/api\/v3\/command$/.test(url)) {
+                    try {
+                        const clone = res.clone();
+                        const data  = await clone.json();
+                        const name  = (data?.name ?? "").toLowerCase();
+                        if (/rescan|refresh/.test(name) && data?.seriesId) {
+                            clearTimeout(_newSeriesTimer);
+                            _newSeriesTimer = setTimeout(async () => {
+                                try {
+                                    const series = await apiReq("GET", `/api/v3/series/${data.seriesId}`);
+                                    await _scanSingleSeries(series);
+                                } catch { /* ignore */ }
+                            }, 5000);
+                        }
+                    } catch { /* ignore */ }
+                    return;
+                }
+
+                // ── Generic mutation on a series page → notify watchers ───────
+                if (/^\/series\/[^/]+/.test(location.pathname)) {
+                    _mutationWatchers.forEach(fn => {
+                        try { fn(); } catch { /* ignore */ }
+                    });
+                }
+            } catch { /* ignore top-level errors */ }
+        });
+        return p;
+    };
+}
 
 // ── Library page detection ─────────────────────────────────────────────────────
 export function isLibraryPage() {
@@ -49,6 +124,7 @@ export function initLibraryFab() {
     loadCache();
     _getOrCreateFab().classList.add("visible");
     _refreshFabBadge();
+    _installFetchWatcher();   // start the unified watcher immediately
 }
 
 // ── Called from series page after checkUnmatchedFiles() ──────────────────────
@@ -270,15 +346,19 @@ function _updateSubhead() {
     const count = _cache.size;
     const stamp = _scanTime ? ` · ${_timeAgo(_scanTime)}` : "";
 
+    const totalSuffix = _totalSeriesCount > 0 ? ` · ${_totalSeriesCount} total series` : "";
+
     if (count > 0) {
         el.className   = "lsp-subhead lsp-subhead--warn";
-        el.textContent = `${count} series with unmatched files${stamp}`;
+        el.textContent = `${count} series with unmatched files${stamp}${totalSuffix}`;
     } else if (_scanTime) {
         el.className   = "lsp-subhead lsp-subhead--ok";
-        el.textContent = `All files matched ✓${stamp}`;
+        el.textContent = `All files matched ✓${stamp}${totalSuffix}`;
     } else {
         el.className   = "lsp-subhead";
-        el.textContent = "Press ▶ Scan all to check all series.";
+        el.textContent = _totalSeriesCount > 0
+            ? `${_totalSeriesCount} series — press ▶ Scan all to check.`
+            : "Press ▶ Scan all to check all series.";
     }
 
     const empty = document.getElementById("lib-scan-empty");
@@ -371,6 +451,7 @@ async function startScan() {
     try {
         const allSeries = await apiReq("GET", "/api/v3/series");
         const active = allSeries.filter(s => s.path);
+        _totalSeriesCount = allSeries.length;
         _total = active.length;
         _updateSubhead();
 
@@ -422,6 +503,47 @@ async function startScan() {
         _scanning = false;
         console.warn("[RG Library Scan]", e.message);
         _updateSubhead();
+    }
+}
+
+// ── Scan a single series (called after new-series API or rescan command) ──────
+// Updates the cache and panel row, does NOT do a full scan.
+
+async function _scanSingleSeries(series) {
+    if (!series?.id || !series?.path) return;
+    try {
+        const items = await apiReq("GET",
+            `/api/v3/manualimport?seriesId=${series.id}` +
+            `&folder=${encodeURIComponent(series.path)}` +
+            `&filterExistingFiles=true&sortKey=relativePath&sortDirection=ascending`
+        );
+        const unmatchedItems = items.filter(it => !(it.episodes?.length > 0));
+        const count = unmatchedItems.length;
+        if (count > 0) {
+            const breakdown    = getBreakdown(series.id, unmatchedItems);
+            const unclassified = breakdown.unclassified;
+            const entry = {
+                seriesId:  series.id,
+                count,
+                allHandled: unclassified === 0,
+                unclassified,
+                breakdown,
+                title:     series.title,
+                titleSlug: series.titleSlug,
+                path:      series.path,
+            };
+            _cache.set(series.id, entry);
+            _appendRow(entry);
+            if (isLibraryPage()) injectBadgeForSlug(series.titleSlug, count, series.id);
+        } else {
+            _cache.delete(series.id);
+            _refreshPanelRow(series.id, 0, series.title, series.titleSlug);
+        }
+        saveCache();
+        _refreshFabBadge();
+        _updateSubhead();
+    } catch (e) {
+        console.warn("[RG Library Scan] _scanSingleSeries:", e.message);
     }
 }
 

@@ -5,7 +5,7 @@
     position: fixed;
     top: 0;
     right: -500px;
-    width: 420px;
+    width: 440px;
     height: 100vh;
     background: #12121e;
     border-left: 1px solid #3a2000;
@@ -14,7 +14,7 @@
     flex-direction: column;
     box-shadow: -8px 0 32px rgba(0, 0, 0, .65);
     font-family: sans-serif;
-    font-size: 13px;
+    font-size: 14px;
     color: #e0e0e0;
     transition: right .25s ease;
     overflow: hidden;
@@ -32,7 +32,7 @@
     flex-shrink: 0;
 }
 .lsp-title {
-    font-size: 13px;
+    font-size: 14px;
     font-weight: bold;
     color: #f80;
 }
@@ -42,12 +42,12 @@
     gap: 6px;
 }
 .lsp-scan-btn {
-    padding: 3px 10px;
-    border-radius: 5px;
+    padding: 5px 13px;
+    border-radius: 6px;
     border: 1px solid #3a2800;
     background: #1e1200;
     color: #f80;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: bold;
     cursor: pointer;
     transition: all .14s;
@@ -55,12 +55,12 @@
     &:disabled { opacity: 0.5; cursor: default; }
 }
 .lsp-close {
-    padding: 3px 8px;
+    padding: 4px 9px;
     border-radius: 4px;
     border: 1px solid #2a2a40;
     background: transparent;
     color: #567;
-    font-size: 13px;
+    font-size: 15px;
     cursor: pointer;
     line-height: 1;
     transition: all .12s;
@@ -69,11 +69,11 @@
 
 // ── Subhead (status line) ─────────────────────────────────────────────────────
 .lsp-subhead {
-    padding: 7px 14px;
-    font-size: 11px;
+    padding: 8px 14px;
+    font-size: 12px;
     border-bottom: 1px solid #1a1a2e;
     flex-shrink: 0;
-    min-height: 30px;
+    min-height: 32px;
 
     &.lsp-subhead--scanning {
         color: #5ad;
@@ -106,12 +106,12 @@
     display: flex;
     align-items: center;
     width: 100%;
-    padding: 9px 10px 9px 12px;
-    border-radius: 6px;
+    padding: 10px 10px 10px 13px;
+    border-radius: 7px;
     border: 1px solid #3a1800;
     background: #0f0800;
     color: #e0d0c0;
-    font-size: 12px;
+    font-size: 13px;
     text-align: left;
     cursor: pointer;
     transition: background .14s, border-color .14s;
@@ -135,7 +135,7 @@
 }
 .lsp-series-title {
     font-weight: 500;
-    font-size: 12px;
+    font-size: 13px;
     line-height: 1.3;
     white-space: nowrap;
     overflow: hidden;
@@ -148,10 +148,10 @@
 }
 .lsp-tag {
     display: inline-block;
-    font-size: 10px;
+    font-size: 11px;
     font-weight: bold;
-    padding: 1px 6px;
-    border-radius: 8px;
+    padding: 2px 8px;
+    border-radius: 9px;
     white-space: nowrap;
 
     &.lsp-tag--warn {
@@ -179,12 +179,12 @@
 
 .lsp-open-btn {
     flex-shrink: 0;
-    padding: 3px 8px;
-    border-radius: 4px;
+    padding: 5px 11px;
+    border-radius: 5px;
     border: 1px solid #3a3000;
     background: #1a1200;
     color: #f80;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: bold;
     cursor: pointer;
     opacity: 0.45;
@@ -199,14 +199,17 @@
 // ── Empty state ───────────────────────────────────────────────────────────────
 .lsp-empty {
     color: #567;
-    font-size: 12px;
+    font-size: 13px;
     text-align: center;
     padding: 24px 0;
     margin: 0;
 }
 
 // ── FAB badge (series count on the 📁 button) ─────────────────────────────────
-#lib-scan-fab { position: relative; }   // positioning context for the badge
+#lib-scan-fab {
+    position: relative;   // positioning context for the badge
+    bottom: 72px;         // permanent slot — above #rg-settings-btn (24px) + 40px + 8px gap
+}
 
 .lib-fab-badge {
     position: absolute;
