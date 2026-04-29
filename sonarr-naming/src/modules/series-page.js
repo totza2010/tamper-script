@@ -150,7 +150,7 @@ export async function checkSeriesPage() {
         injectEpEditBtns();
         checkUnmatchedFiles().then(result => {
             if (!result) return;
-            updateCacheEntry(result.series, result.count, result.allHandled, result.unclassified);
+            updateCacheEntry(result.series, result.count, result.allHandled, result.unclassified, result.breakdown);
             if (result.count > 0) {
                 showSeriesAlert(result.series, result.count, result.allHandled, _autoRecheck);
             }
@@ -208,7 +208,7 @@ async function _autoRecheck() {
     try {
         const result = await checkUnmatchedFiles();
         if (!result) return;
-        updateCacheEntry(result.series, result.count, result.allHandled, result.unclassified);
+        updateCacheEntry(result.series, result.count, result.allHandled, result.unclassified, result.breakdown);
         if (result.count > 0) {
             showSeriesAlert(result.series, result.count, result.allHandled, _autoRecheck);
         } else {

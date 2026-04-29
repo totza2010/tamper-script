@@ -3,7 +3,7 @@
 import { apiReq } from "./api.js";
 import { setSpData } from "./state.js";
 import { showToast } from "./utils.js";
-import { showUnmatchedPanel, countUnclassified } from "./unmatched.js";
+import { showUnmatchedPanel, getBreakdown } from "./unmatched.js";
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 // entry: { seriesId, count, allHandled, title, titleSlug, path }
@@ -52,13 +52,14 @@ export function initLibraryFab() {
 }
 
 // ── Called from series page after checkUnmatchedFiles() ──────────────────────
-export function updateCacheEntry(series, count, allHandled = false, unclassified = count) {
+export function updateCacheEntry(series, count, allHandled = false, unclassified = count, breakdown = null) {
     if (count > 0) {
         _cache.set(series.id, {
             seriesId:     series.id,
             count,
             allHandled,
             unclassified,
+            breakdown:    breakdown ?? { multipart: 0, version: 0, ignore: 0, delete: 0, unclassified: count },
             title:        series.title,
             titleSlug:    series.titleSlug,
             path:         series.path,
@@ -287,20 +288,30 @@ function _updateSubhead() {
 }
 
 function _rowStatusHtml(entry) {
-    const unclassified = entry.unclassified ?? entry.count;
-    const classified   = entry.count - unclassified;
+    const bd = entry.breakdown ?? {};
+    const unclassified = bd.unclassified ?? (entry.unclassified ?? entry.count);
+    const multipart    = bd.multipart ?? 0;
+    const version      = bd.version   ?? 0;
+    const ignore       = bd.ignore    ?? 0;
+    const del          = bd.delete    ?? 0;
 
-    if (unclassified === 0) {
-        // All handled — yellow check
-        return `<span class="lsp-tag lsp-tag--ok">✓ ${entry.count} file${entry.count !== 1 ? "s" : ""} classified</span>`;
+    const parts = [];
+
+    // Warning first — unclassified files that need human action
+    if (unclassified > 0) {
+        parts.push(`<span class="lsp-tag lsp-tag--warn">⚠ ${unclassified} unclassified</span>`);
     }
-    if (classified === 0) {
-        // None handled — red warning
-        return `<span class="lsp-tag lsp-tag--warn">⚠ ${entry.count} file${entry.count !== 1 ? "s" : ""} — need action</span>`;
+    // Classified types — show only non-zero
+    if (multipart > 0) parts.push(`<span class="lsp-tag lsp-tag--info">📼 ${multipart} multi-part</span>`);
+    if (version   > 0) parts.push(`<span class="lsp-tag lsp-tag--info">🔀 ${version} version</span>`);
+    if (ignore    > 0) parts.push(`<span class="lsp-tag lsp-tag--dim">👁 ${ignore} ignore</span>`);
+    if (del       > 0) parts.push(`<span class="lsp-tag lsp-tag--dim">🗑 ${del} delete</span>`);
+
+    if (parts.length === 0) {
+        // Fallback — should not happen, but safe
+        return `<span class="lsp-tag lsp-tag--ok">✓ ${entry.count} file${entry.count !== 1 ? "s" : ""}</span>`;
     }
-    // Mixed
-    return `<span class="lsp-tag lsp-tag--warn">⚠ ${unclassified} need action</span>` +
-           `<span class="lsp-tag lsp-tag--dim">· ${classified} classified</span>`;
+    return parts.join("");
 }
 
 function _appendRow(entry) {
@@ -376,13 +387,14 @@ async function startScan() {
                     const unmatchedItems = items.filter(it => !(it.episodes?.length > 0));
                     const count = unmatchedItems.length;
                     if (count > 0) {
-                        const paths        = unmatchedItems.map(it => it.relativePath ?? it.path ?? "");
-                        const unclassified = countUnclassified(series.id, paths);
+                        const breakdown    = getBreakdown(series.id, unmatchedItems);
+                        const unclassified = breakdown.unclassified;
                         const entry = {
                             seriesId:     series.id,
                             count,
                             allHandled:   unclassified === 0,
                             unclassified,
+                            breakdown,
                             title:        series.title,
                             titleSlug:    series.titleSlug,
                             path:         series.path,

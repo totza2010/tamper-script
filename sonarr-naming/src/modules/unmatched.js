@@ -160,14 +160,44 @@ function clearDecision(sid, path) {
     GM_setValue(UNM_KEY(sid), JSON.stringify(all));
 }
 /**
- * Count how many of the given relativePaths have no saved decision for seriesId.
- * Used by library-scan.js during scan (avoids importing private loadDecisions).
+ * Return a per-type classification breakdown for the given unmatched items.
+ * Used by library-scan.js (exported so it doesn't need to import private helpers).
+ *
+ * Returns: { multipart, version, ignore, delete: del, unclassified }
+ *
+ * Mapping rules:
+ *   – explicit decision type "multipart" / "det-multipart" / picking states → multipart
+ *   – explicit "version"                                                     → version
+ *   – explicit "ignore"                                                      → ignore
+ *   – explicit "delete"                                                      → delete
+ *   – no decision but filename matches MULTI_PART_RE                         → multipart (auto)
+ *   – nothing                                                                → unclassified
  */
-export function countUnclassified(seriesId, unmatchedPaths) {
+export function getBreakdown(seriesId, unmatchedItems) {
+    const out = { multipart: 0, version: 0, ignore: 0, delete: 0, unclassified: 0 };
     try {
         const decisions = JSON.parse(GM_getValue(UNM_KEY(seriesId), "{}"));
-        return unmatchedPaths.filter(p => p && decisions[p] == null).length;
-    } catch { return unmatchedPaths.length; }
+        for (const item of unmatchedItems) {
+            const p   = item.relativePath ?? item.path ?? "";
+            const dec = p ? decisions[p] : null;
+
+            if (dec != null) {
+                const t = dec.type ?? "";
+                if (t === "multipart" || t === "det-multipart" ||
+                    t === "multipart-picking" || t === "det-picking") {
+                    out.multipart++;
+                } else if (t === "version")  { out.version++;    }
+                else if  (t === "ignore")    { out.ignore++;     }
+                else if  (t === "delete")    { out.delete++;     }
+                else                         { out.unclassified++; }  // unknown/future type
+            } else if (p && MULTI_PART_RE.test(splitPath(p).filename)) {
+                out.multipart++;        // auto-detected by filename pattern
+            } else {
+                out.unclassified++;
+            }
+        }
+    } catch { out.unclassified = unmatchedItems.length; }
+    return out;
 }
 
 function pruneDecisions(sid, activePaths) {
@@ -570,15 +600,11 @@ export async function checkUnmatchedFiles() {
         const unmatchedItems = items.filter(i => !(i.episodes?.length > 0));
         const count = unmatchedItems.length;
 
-        // Check decisions — how many are classified vs still need action
-        let allHandled   = false;
-        let unclassified = count;
-        if (count > 0) {
-            const decisions = loadDecisions(series.id);
-            const paths = unmatchedItems.map(i => i.relativePath ?? i.path ?? "");
-            unclassified = paths.filter(p => !p || decisions[p] == null).length;
-            allHandled   = unclassified === 0;
-        }
+        // Full per-type breakdown (multipart / version / ignore / delete / unclassified)
+        const breakdown   = count > 0 ? getBreakdown(series.id, unmatchedItems)
+                                      : { multipart: 0, version: 0, ignore: 0, delete: 0, unclassified: 0 };
+        const unclassified = breakdown.unclassified;
+        const allHandled   = count > 0 && unclassified === 0;
 
         if (btn) {
             if (count > 0) {
@@ -591,7 +617,7 @@ export async function checkUnmatchedFiles() {
             }
         }
 
-        return { series, count, allHandled, unclassified };
+        return { series, count, allHandled, unclassified, breakdown };
     } catch (e) {
         console.warn("[RG Unmatched]", e.message);
         return null;
