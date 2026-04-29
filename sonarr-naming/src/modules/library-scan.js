@@ -3,7 +3,7 @@
 import { apiReq } from "./api.js";
 import { setSpData } from "./state.js";
 import { showToast } from "./utils.js";
-import { showUnmatchedPanel } from "./unmatched.js";
+import { showUnmatchedPanel, countUnclassified } from "./unmatched.js";
 
 // ── Persistence ───────────────────────────────────────────────────────────────
 // entry: { seriesId, count, allHandled, title, titleSlug, path }
@@ -52,15 +52,16 @@ export function initLibraryFab() {
 }
 
 // ── Called from series page after checkUnmatchedFiles() ──────────────────────
-export function updateCacheEntry(series, count, allHandled = false) {
+export function updateCacheEntry(series, count, allHandled = false, unclassified = count) {
     if (count > 0) {
         _cache.set(series.id, {
-            seriesId:   series.id,
+            seriesId:     series.id,
             count,
             allHandled,
-            title:      series.title,
-            titleSlug:  series.titleSlug,
-            path:       series.path,
+            unclassified,
+            title:        series.title,
+            titleSlug:    series.titleSlug,
+            path:         series.path,
         });
     } else {
         _cache.delete(series.id);
@@ -285,6 +286,23 @@ function _updateSubhead() {
         : "";
 }
 
+function _rowStatusHtml(entry) {
+    const unclassified = entry.unclassified ?? entry.count;
+    const classified   = entry.count - unclassified;
+
+    if (unclassified === 0) {
+        // All handled — yellow check
+        return `<span class="lsp-tag lsp-tag--ok">✓ ${entry.count} file${entry.count !== 1 ? "s" : ""} classified</span>`;
+    }
+    if (classified === 0) {
+        // None handled — red warning
+        return `<span class="lsp-tag lsp-tag--warn">⚠ ${entry.count} file${entry.count !== 1 ? "s" : ""} — need action</span>`;
+    }
+    // Mixed
+    return `<span class="lsp-tag lsp-tag--warn">⚠ ${unclassified} need action</span>` +
+           `<span class="lsp-tag lsp-tag--dim">· ${classified} classified</span>`;
+}
+
 function _appendRow(entry) {
     const list = document.getElementById("lib-scan-list");
     if (!list) return;
@@ -295,8 +313,10 @@ function _appendRow(entry) {
     row.dataset.id   = entry.seriesId;
     row.dataset.slug = entry.titleSlug ?? "";
     row.innerHTML = `
-        <span class="lsp-series-title">${_esc(entry.title)}</span>
-        <span class="lsp-series-count">${entry.count} file${entry.count !== 1 ? "s" : ""}</span>
+        <div class="lsp-series-info">
+            <span class="lsp-series-title">${_esc(entry.title)}</span>
+            <div class="lsp-series-tags">${_rowStatusHtml(entry)}</div>
+        </div>
         <button class="lsp-open-btn" data-slug="${_esc(entry.titleSlug ?? "")}" title="Open series page">↗</button>`;
     list.appendChild(row);
 }
@@ -306,12 +326,13 @@ function _refreshPanelRow(seriesId, count, title, titleSlug) {
     if (!list) return;
 
     const existing = list.querySelector(`[data-id="${seriesId}"]`);
-    if (count > 0) {
+    const entry = _cache.get(seriesId);   // may be undefined if just deleted
+
+    if (count > 0 && entry) {
         if (existing) {
-            existing.querySelector(".lsp-series-count").textContent =
-                `${count} file${count !== 1 ? "s" : ""}`;
+            existing.querySelector(".lsp-series-tags").innerHTML = _rowStatusHtml(entry);
         } else {
-            _appendRow({ seriesId, count, title, titleSlug });
+            _appendRow(entry);
         }
     } else {
         existing?.remove();
@@ -352,15 +373,19 @@ async function startScan() {
                         `&folder=${encodeURIComponent(series.path)}` +
                         `&filterExistingFiles=true&sortKey=relativePath&sortDirection=ascending`
                     );
-                    const count = items.filter(it => !(it.episodes?.length > 0)).length;
+                    const unmatchedItems = items.filter(it => !(it.episodes?.length > 0));
+                    const count = unmatchedItems.length;
                     if (count > 0) {
+                        const paths        = unmatchedItems.map(it => it.relativePath ?? it.path ?? "");
+                        const unclassified = countUnclassified(series.id, paths);
                         const entry = {
-                            seriesId:   series.id,
+                            seriesId:     series.id,
                             count,
-                            allHandled: false,
-                            title:      series.title,
-                            titleSlug:  series.titleSlug,
-                            path:       series.path,
+                            allHandled:   unclassified === 0,
+                            unclassified,
+                            title:        series.title,
+                            titleSlug:    series.titleSlug,
+                            path:         series.path,
                         };
                         _cache.set(series.id, entry);
                         _appendRow(entry);

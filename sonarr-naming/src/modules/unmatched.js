@@ -159,6 +159,17 @@ function clearDecision(sid, path) {
     const all = loadDecisions(sid); delete all[path];
     GM_setValue(UNM_KEY(sid), JSON.stringify(all));
 }
+/**
+ * Count how many of the given relativePaths have no saved decision for seriesId.
+ * Used by library-scan.js during scan (avoids importing private loadDecisions).
+ */
+export function countUnclassified(seriesId, unmatchedPaths) {
+    try {
+        const decisions = JSON.parse(GM_getValue(UNM_KEY(seriesId), "{}"));
+        return unmatchedPaths.filter(p => p && decisions[p] == null).length;
+    } catch { return unmatchedPaths.length; }
+}
+
 function pruneDecisions(sid, activePaths) {
     const all = loadDecisions(sid);
     let dirty = false;
@@ -559,14 +570,14 @@ export async function checkUnmatchedFiles() {
         const unmatchedItems = items.filter(i => !(i.episodes?.length > 0));
         const count = unmatchedItems.length;
 
-        // Check if every unmatched file already has a saved decision (multi/ignore/etc.)
-        let allHandled = false;
+        // Check decisions — how many are classified vs still need action
+        let allHandled   = false;
+        let unclassified = count;
         if (count > 0) {
             const decisions = loadDecisions(series.id);
-            allHandled = unmatchedItems.every(i => {
-                const p = i.relativePath ?? i.path ?? "";
-                return p && decisions[p] != null;
-            });
+            const paths = unmatchedItems.map(i => i.relativePath ?? i.path ?? "");
+            unclassified = paths.filter(p => !p || decisions[p] == null).length;
+            allHandled   = unclassified === 0;
         }
 
         if (btn) {
@@ -580,7 +591,7 @@ export async function checkUnmatchedFiles() {
             }
         }
 
-        return { series, count, allHandled };
+        return { series, count, allHandled, unclassified };
     } catch (e) {
         console.warn("[RG Unmatched]", e.message);
         return null;
