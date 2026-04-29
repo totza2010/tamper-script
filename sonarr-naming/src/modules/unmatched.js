@@ -252,6 +252,29 @@ function renderDecisionWrap(dec, epOpts) {
         </div>`;
     }
 
+    if (dec.type === "version-picking") {
+        const epOpsHtml = epOpts.map(o =>
+            `<option value="${o.fileId}">${esc(o.label)}</option>`
+        ).join("");
+        return `<div class="unm-decision-wrap">
+            <div class="unm-decision unm-decision--version">
+                <div class="unm-decision-head">
+                    <span class="unm-decision-badge">🔀 Multi-version</span>
+                    <button class="unm-undo-btn" title="Cancel">× cancel</button>
+                </div>
+                <div class="unm-pair-form open">
+                    <div class="unm-pair-field">
+                        <span class="unm-pair-lbl">Version of episode:</span>
+                        <select class="unm-ver-ep">
+                            <option value="">— select —</option>
+                            ${epOpsHtml}
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }
+
     if (dec.type === "multipart-picking") {
         const epOpsHtml = epOpts.map(o =>
             `<option value="${o.fileId}">${esc(o.label)}</option>`
@@ -300,9 +323,27 @@ function renderDecisionWrap(dec, epOpts) {
         </div>`;
     }
 
+    if (dec.type === "version") {
+        const ep    = epOpts.find(o => o.fileId === dec.episodeFileId);
+        const epTag = ep
+            ? `S${String(ep.sn).padStart(2,"0")}E${String(ep.ep).padStart(2,"0")}`
+            : "";
+        const label = epTag ? `🔀 version of ${epTag}` : "🔀 Multi-version";
+        const note  = epTag
+            ? `An alternative version of ${epTag}${ep?.label?.includes("—") ? " — " + ep.label.split("—")[1].trim() : ""}.`
+            : "An alternative version of the already-imported episode.";
+        return `<div class="unm-decision-wrap">
+            <div class="unm-decision unm-decision--version">
+                <div class="unm-decision-head">
+                    <span class="unm-decision-badge">${label}</span>
+                    <button class="unm-undo-btn">× undo</button>
+                </div>
+                <div class="unm-decision-note">${note}</div>
+            </div>
+        </div>`;
+    }
+
     const CFG = {
-        version: { icon: "🔀", label: "Multi-version",  cls: "version",
-                   note: "An alternative version of the already-imported episode." },
         ignore:  { icon: "👁", label: "Ignored",        cls: "ignore",  note: "" },
         delete:  { icon: "🗑", label: "Flag to delete", cls: "delete",
                    note: "Remove this file from the series folder — it has no use here." },
@@ -863,6 +904,10 @@ export function showUnmatchedPanel() {
             if (action === "multipart") {
                 card.dataset.decision = "multipart-picking";
                 swapWrap(card, renderDecisionWrap({ type: "multipart-picking" }, panel._epOpts));
+            } else if (action === "version") {
+                // Open episode picker — don't save until user selects an episode
+                card.dataset.decision = "version-picking";
+                swapWrap(card, renderDecisionWrap({ type: "version-picking" }, panel._epOpts));
             } else if (action === "det-pair") {
                 const thisPartNum = parseInt(card.dataset.thisPart) || 1;
                 card.dataset.decision = "det-picking";
@@ -870,7 +915,7 @@ export function showUnmatchedPanel() {
                     { type: "det-picking" }, panel._epOpts, thisPartNum, false,
                 ));
             } else {
-                // ignore / version / delete / acknowledge
+                // ignore / delete / acknowledge
                 const dec = { type: action };
                 if (panel._sid) saveDecision(panel._sid, path, dec);
                 card.dataset.decision = action;
@@ -1037,8 +1082,24 @@ export function showUnmatchedPanel() {
 
     panel.addEventListener("change", e => {
         const card = e.target.closest(".unm-file");
-        if (!card || !e.target.closest(".unm-pair-ep")) return;
-        if (isDetectedCard(card)) tryUpdateDetRename(card);
-        else                      tryUpdateRename(card);
+        if (!card) return;
+
+        // Multi-part episode picker
+        if (e.target.closest(".unm-pair-ep")) {
+            if (isDetectedCard(card)) tryUpdateDetRename(card);
+            else                      tryUpdateRename(card);
+            return;
+        }
+
+        // Multi-version episode picker — selecting an episode confirms immediately
+        if (e.target.closest(".unm-ver-ep")) {
+            const fileId = parseInt(e.target.value);
+            if (!fileId) return;
+            const path = decodeURIComponent(card.dataset.path ?? "");
+            const dec  = { type: "version", episodeFileId: fileId };
+            if (panel._sid) saveDecision(panel._sid, path, dec);
+            card.dataset.decision = "version";
+            swapWrap(card, renderDecisionWrap(dec, panel._epOpts));
+        }
     });
 }
