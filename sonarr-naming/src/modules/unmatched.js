@@ -43,6 +43,43 @@ function extractPartNum(filename) {
     return m ? parseInt(m[2]) : null;
 }
 
+/** Extract version number from filename: [VER2] / -ver2- / _VER2_ etc. */
+function extractVersionNum(filename) {
+    const m = filename.match(/\bver\s*(\d+)\b/i);
+    return m ? parseInt(m[1]) : null;
+}
+
+/**
+ * Compute a rename target for a multi-version unmatched file by inserting
+ * "-verN" between the base name and the release group, using the Sonarr
+ * episode file as the name template.
+ */
+function computeVersionTargetName(importedFile, verNum) {
+    const { filename } = splitPath(importedFile.relativePath ?? "");
+    if (!filename) return null;
+    const dot  = filename.lastIndexOf(".");
+    const ext  = dot >= 0 ? filename.slice(dot) : ".mkv";
+    let base   = dot >= 0 ? filename.slice(0, dot) : filename;
+
+    // Strip any existing version indicator (e.g. -[VER1] or -ver1)
+    base = base
+        .replace(/-\[VER\d+\]/gi, "")
+        .replace(/-ver\d+/gi, "")
+        .replace(/-{2,}/g, "-")
+        .replace(/-$/, "");
+
+    const baseRG   = importedFile.releaseGroup ?? "";
+    const verToken = `ver${verNum}`;
+
+    if (baseRG) {
+        const rgSuffix = `-${baseRG}`;
+        if (base.toLowerCase().endsWith(rgSuffix.toLowerCase())) {
+            return `${base.slice(0, base.length - rgSuffix.length)}-${verToken}-${baseRG}${ext}`;
+        }
+    }
+    return `${base}-${verToken}${ext}`;
+}
+
 /**
  * Extract the part format keyword from a filename.
  * e.g. "...-part1-..." → "part"
@@ -256,6 +293,7 @@ function renderDecisionWrap(dec, epOpts) {
         const epOpsHtml = epOpts.map(o =>
             `<option value="${o.fileId}">${esc(o.label)}</option>`
         ).join("");
+        const preselect = dec._autoVer ?? null;
         return `<div class="unm-decision-wrap">
             <div class="unm-decision unm-decision--version">
                 <div class="unm-decision-head">
@@ -270,6 +308,16 @@ function renderDecisionWrap(dec, epOpts) {
                             ${epOpsHtml}
                         </select>
                     </div>
+                    <div class="unm-pair-field">
+                        <span class="unm-pair-lbl">Version number:</span>
+                        <div class="unm-ver-pills">
+                            ${[1,2,3,4].map(n =>
+                                `<button class="unm-part-pill${n === preselect ? " active" : ""}" data-ver="${n}">ver${n}</button>`
+                            ).join("")}
+                        </div>
+                    </div>
+                    ${renameBox("", true)}
+                    <button class="unm-ver-confirm-btn" disabled>✓ Confirm</button>
                 </div>
             </div>
         </div>`;
@@ -328,17 +376,22 @@ function renderDecisionWrap(dec, epOpts) {
         const epTag = ep
             ? `S${String(ep.sn).padStart(2,"0")}E${String(ep.ep).padStart(2,"0")}`
             : "";
-        const label = epTag ? `🔀 version of ${epTag}` : "🔀 Multi-version";
+        const badge = dec.verNum && epTag ? `🔀 ver${dec.verNum} of ${epTag}`
+                    : dec.verNum          ? `🔀 ver${dec.verNum}`
+                    : epTag               ? `🔀 version of ${epTag}`
+                    :                       "🔀 Multi-version";
+        const epTitle = ep?.label?.includes("—") ? ep.label.split("—").slice(1).join("—").trim() : "";
         const note  = epTag
-            ? `An alternative version of ${epTag}${ep?.label?.includes("—") ? " — " + ep.label.split("—")[1].trim() : ""}.`
+            ? `Alternative version of ${epTag}${epTitle ? ` — ${epTitle}` : ""}.`
             : "An alternative version of the already-imported episode.";
         return `<div class="unm-decision-wrap">
             <div class="unm-decision unm-decision--version">
                 <div class="unm-decision-head">
-                    <span class="unm-decision-badge">${label}</span>
+                    <span class="unm-decision-badge">${badge}</span>
                     <button class="unm-undo-btn">× undo</button>
                 </div>
                 <div class="unm-decision-note">${note}</div>
+                ${dec.targetName ? renameBox(dec.targetName) : ""}
             </div>
         </div>`;
     }
@@ -835,6 +888,44 @@ export function showUnmatchedPanel() {
         }
     }
 
+    // ── Version rename preview ────────────────────────────────────────────────
+    // Stores pending data; saving only happens on "✓ Confirm".
+    const verPickTemp = new Map();
+
+    function tryUpdateVersionRename(card) {
+        const select      = card.querySelector(".unm-ver-ep");
+        const pillGroup   = card.querySelector(".unm-ver-pills");
+        const activePill  = pillGroup?.querySelector(".unm-part-pill.active");
+        const renameDiv   = card.querySelector(".unm-rename");
+        const targetSpan  = card.querySelector(".unm-rename-target");
+        const copyBtn     = card.querySelector(".unm-copy-btn");
+        const confirmBtn  = card.querySelector(".unm-ver-confirm-btn");
+
+        const fileId = parseInt(select?.value);
+        const verN   = activePill ? parseInt(activePill.dataset.ver) : null;
+
+        if (!fileId || !verN) {
+            renameDiv?.classList.add("unm-rename--hidden");
+            confirmBtn?.setAttribute("disabled", "");
+            return;
+        }
+
+        const opt = panel._epOpts.find(o => o.fileId === fileId);
+        if (!opt) return;
+
+        const target = computeVersionTargetName(opt.file, verN);
+        if (!target) return;
+
+        if (targetSpan) targetSpan.textContent = target;
+        if (copyBtn)    copyBtn.dataset.copy = target;
+        renameDiv?.classList.remove("unm-rename--hidden");
+        confirmBtn?.removeAttribute("disabled");
+
+        // Store pending (not persisted until user clicks Confirm)
+        const path = decodeURIComponent(card.dataset.path ?? "");
+        verPickTemp.set(path, { fileId, verN, target });
+    }
+
     // ── Preview for DETECTED cards (det-picking) ──────────────────────────────
     // Shows rename targets in-place; user must click "✓ Confirm pairing" to save.
     function tryUpdateDetRename(card) {
@@ -905,9 +996,13 @@ export function showUnmatchedPanel() {
                 card.dataset.decision = "multipart-picking";
                 swapWrap(card, renderDecisionWrap({ type: "multipart-picking" }, panel._epOpts));
             } else if (action === "version") {
-                // Open episode picker — don't save until user selects an episode
+                // Auto-detect version number from the unmatched file's name
+                const cardFilename = card.querySelector(".unm-filename")?.textContent ?? "";
+                const autoVer = extractVersionNum(cardFilename);
                 card.dataset.decision = "version-picking";
-                swapWrap(card, renderDecisionWrap({ type: "version-picking" }, panel._epOpts));
+                swapWrap(card, renderDecisionWrap(
+                    { type: "version-picking", _autoVer: autoVer }, panel._epOpts,
+                ));
             } else if (action === "det-pair") {
                 const thisPartNum = parseInt(card.dataset.thisPart) || 1;
                 card.dataset.decision = "det-picking";
@@ -929,6 +1024,22 @@ export function showUnmatchedPanel() {
                     swapWrap(card, renderDecisionWrap(dec, panel._epOpts));
                 }
             }
+            return;
+        }
+
+        // ── Confirm version button ────────────────────────────────────────────
+        const verConfirmBtn = e.target.closest(".unm-ver-confirm-btn");
+        if (verConfirmBtn && !verConfirmBtn.disabled) {
+            const card = verConfirmBtn.closest(".unm-file");
+            const path = decodeURIComponent(card.dataset.path ?? "");
+            const temp = verPickTemp.get(path);
+            if (!temp) return;
+
+            const dec = { type: "version", episodeFileId: temp.fileId, verNum: temp.verN, targetName: temp.target };
+            if (panel._sid) saveDecision(panel._sid, path, dec);
+            verPickTemp.delete(path);
+            card.dataset.decision = "version";
+            swapWrap(card, renderDecisionWrap(dec, panel._epOpts));
             return;
         }
 
@@ -960,16 +1071,19 @@ export function showUnmatchedPanel() {
             return;
         }
 
-        // ── Part number pill ──────────────────────────────────────────────────
+        // ── Part / version number pill ────────────────────────────────────────
         const pill = e.target.closest(".unm-part-pill");
         if (pill) {
-            pill.closest(".unm-part-pills")
-                .querySelectorAll(".unm-part-pill")
+            // Deactivate siblings in the same pill group
+            const pillGroup = pill.closest(".unm-part-pills, .unm-ver-pills");
+            pillGroup?.querySelectorAll(".unm-part-pill")
                 .forEach(p => p.classList.remove("active"));
             pill.classList.add("active");
-            const card = pill.closest(".unm-file");
-            if (isDetectedCard(card)) tryUpdateDetRename(card);
-            else                      tryUpdateRename(card);
+            const card    = pill.closest(".unm-file");
+            const isVerPill = !!pill.closest(".unm-ver-pills");
+            if (isVerPill)                 tryUpdateVersionRename(card);
+            else if (isDetectedCard(card)) tryUpdateDetRename(card);
+            else                           tryUpdateRename(card);
             return;
         }
 
@@ -980,6 +1094,7 @@ export function showUnmatchedPanel() {
             const path = decodeURIComponent(card.dataset.path ?? "");
             if (panel._sid) clearDecision(panel._sid, path);
             detPickTemp.delete(path);
+            verPickTemp.delete(path);
             if (isDetectedCard(card)) {
                 const thisPartNum = parseInt(card.dataset.thisPart) || 1;
                 const autoPaired  = isAutoPairedCard(card);
@@ -1091,15 +1206,9 @@ export function showUnmatchedPanel() {
             return;
         }
 
-        // Multi-version episode picker — selecting an episode confirms immediately
+        // Multi-version episode picker — update rename preview (doesn't confirm yet)
         if (e.target.closest(".unm-ver-ep")) {
-            const fileId = parseInt(e.target.value);
-            if (!fileId) return;
-            const path = decodeURIComponent(card.dataset.path ?? "");
-            const dec  = { type: "version", episodeFileId: fileId };
-            if (panel._sid) saveDecision(panel._sid, path, dec);
-            card.dataset.decision = "version";
-            swapWrap(card, renderDecisionWrap(dec, panel._epOpts));
+            tryUpdateVersionRename(card);
         }
     });
 }
