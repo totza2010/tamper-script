@@ -206,10 +206,9 @@
 }
 
 // ── FAB badge (series count on the 📁 button) ─────────────────────────────────
-#lib-scan-fab {
-    position: relative;   // positioning context for the badge
-    bottom: 72px;         // permanent slot — above #rg-settings-btn (24px) + 40px + 8px gap
-}
+// position:fixed (from .rg-fab-side) already acts as containing block for
+// absolutely-positioned children — no need for position:relative here.
+#lib-scan-fab { bottom: 72px; }   // permanent slot above ⚙ (24px + 40px + 8px gap)
 
 .lib-fab-badge {
     position: absolute;
