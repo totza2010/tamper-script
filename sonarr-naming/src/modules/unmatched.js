@@ -50,9 +50,20 @@ function extractVersionNum(filename) {
 }
 
 /**
- * Compute a rename target for a multi-version unmatched file by inserting
- * "-verN" between the base name and the release group, using the Sonarr
- * episode file as the name template.
+ * Strip any leading version indicator from a release-group string.
+ * e.g. "ver2-AudioJASubTH" → "AudioJASubTH"
+ */
+function stripVersionFromRG(rg) {
+    const stripped = (rg ?? "")
+        .replace(/^ver\d+-?/i, "")
+        .replace(/^-/, "");
+    return stripped || (rg ?? "");
+}
+
+/**
+ * Compute a rename target by inserting "-verN" between the base name and the
+ * release group, using the Sonarr episode file as the naming template.
+ * Works for both the unmatched file and the Sonarr-managed file.
  */
 function computeVersionTargetName(importedFile, verNum) {
     const { filename } = splitPath(importedFile.relativePath ?? "");
@@ -61,14 +72,15 @@ function computeVersionTargetName(importedFile, verNum) {
     const ext  = dot >= 0 ? filename.slice(dot) : ".mkv";
     let base   = dot >= 0 ? filename.slice(0, dot) : filename;
 
-    // Strip any existing version indicator (e.g. -[VER1] or -ver1)
+    // Strip any existing version indicator from the base name
     base = base
         .replace(/-\[VER\d+\]/gi, "")
         .replace(/-ver\d+/gi, "")
         .replace(/-{2,}/g, "-")
         .replace(/-$/, "");
 
-    const baseRG   = importedFile.releaseGroup ?? "";
+    // Use the clean base RG (without any version prefix)
+    const baseRG   = stripVersionFromRG(importedFile.releaseGroup ?? "");
     const verToken = `ver${verNum}`;
 
     if (baseRG) {
@@ -293,7 +305,8 @@ function renderDecisionWrap(dec, epOpts) {
         const epOpsHtml = epOpts.map(o =>
             `<option value="${o.fileId}">${esc(o.label)}</option>`
         ).join("");
-        const preselect = dec._autoVer ?? null;
+        const preselect      = dec._autoVer ?? null;
+        const autoSonarrVer  = preselect === 1 ? 2 : 1;
         return `<div class="unm-decision-wrap">
             <div class="unm-decision unm-decision--version">
                 <div class="unm-decision-head">
@@ -309,14 +322,23 @@ function renderDecisionWrap(dec, epOpts) {
                         </select>
                     </div>
                     <div class="unm-pair-field">
-                        <span class="unm-pair-lbl">Version number:</span>
-                        <div class="unm-ver-pills">
+                        <span class="unm-pair-lbl">This file is version:</span>
+                        <div class="unm-ver-pills" data-role="this">
                             ${[1,2,3,4].map(n =>
                                 `<button class="unm-part-pill${n === preselect ? " active" : ""}" data-ver="${n}">ver${n}</button>`
                             ).join("")}
                         </div>
                     </div>
-                    ${renameBox("", true)}
+                    <div class="unm-pair-field">
+                        <span class="unm-pair-lbl">Sonarr file is version:</span>
+                        <div class="unm-ver-pills" data-role="sonarr">
+                            ${[1,2,3,4].map(n =>
+                                `<button class="unm-part-pill${n === autoSonarrVer ? " active" : ""}" data-ver="${n}">ver${n}</button>`
+                            ).join("")}
+                        </div>
+                    </div>
+                    <!-- Preview appears here once all three fields are set -->
+                    <div class="unm-det-preview unm-rename--hidden"></div>
                     <button class="unm-ver-confirm-btn" disabled>✓ Confirm</button>
                 </div>
             </div>
@@ -376,14 +398,64 @@ function renderDecisionWrap(dec, epOpts) {
         const epTag = ep
             ? `S${String(ep.sn).padStart(2,"0")}E${String(ep.ep).padStart(2,"0")}`
             : "";
-        const badge = dec.verNum && epTag ? `🔀 ver${dec.verNum} of ${epTag}`
-                    : dec.verNum          ? `🔀 ver${dec.verNum}`
+        // Support both old (verNum/targetName) and new (thisVerNum/thisTargetName) field names
+        const thisVerNum   = dec.thisVerNum   ?? dec.verNum;
+        const sonarrVerNum = dec.sonarrVerNum ?? null;
+        const thisTarget   = dec.thisTargetName ?? dec.targetName ?? "";
+        const sonarrTarget = dec.sonarrTargetName ?? "";
+        const badge = thisVerNum && epTag ? `🔀 ver${thisVerNum} of ${epTag}`
+                    : thisVerNum          ? `🔀 ver${thisVerNum}`
                     : epTag               ? `🔀 version of ${epTag}`
                     :                       "🔀 Multi-version";
         const epTitle = ep?.label?.includes("—") ? ep.label.split("—").slice(1).join("—").trim() : "";
         const note  = epTag
             ? `Alternative version of ${epTag}${epTitle ? ` — ${epTitle}` : ""}.`
             : "An alternative version of the already-imported episode.";
+
+        // This file section (copy btn)
+        let thisSection = "";
+        if (thisTarget) {
+            if (dec.thisRenamed) {
+                thisSection = `
+                <div class="unm-rename-lbl" style="margin-top:6px">This file ver${thisVerNum ?? ""}:</div>
+                <div class="unm-rename-row">
+                    <span class="unm-rename-target">${esc(thisTarget)}</span>
+                    <span class="unm-renamed-ok">✓ renamed</span>
+                </div>`;
+            } else {
+                thisSection = `
+                <div class="unm-rename-lbl" style="margin-top:6px">This file ver${thisVerNum ?? ""} — copy &amp; rename manually:</div>
+                <div class="unm-rename-row">
+                    <span class="unm-rename-target">${esc(thisTarget)}</span>
+                    <button class="unm-copy-btn" data-copy="${esc(thisTarget)}" title="Copy filename">📋</button>
+                </div>`;
+            }
+        }
+
+        // Sonarr file section (API rename btn)
+        let sonarrSection = "";
+        if (sonarrTarget) {
+            if (dec.sonarrRenamed) {
+                sonarrSection = `
+                <div class="unm-rename-lbl" style="margin-top:6px">Sonarr file ver${sonarrVerNum ?? ""} — renamed:</div>
+                <div class="unm-rename-row">
+                    <span class="unm-rename-target">${esc(sonarrTarget)}</span>
+                    <span class="unm-renamed-ok">✓ renamed</span>
+                </div>`;
+            } else {
+                sonarrSection = `
+                <div class="unm-rename-lbl" style="margin-top:6px">Sonarr file ver${sonarrVerNum ?? ""} — rename via API:</div>
+                <div class="unm-rename-row">
+                    <span class="unm-rename-target">${esc(sonarrTarget)}</span>
+                    <button class="unm-api-ver-rename-btn"
+                        data-fileid="${dec.episodeFileId}"
+                        data-vernum="${sonarrVerNum ?? ""}"
+                        data-rg="${esc(dec.sonarrOriginalRG ?? "")}"
+                        title="Update release group and trigger Sonarr rename">↺ Rename</button>
+                </div>`;
+            }
+        }
+
         return `<div class="unm-decision-wrap">
             <div class="unm-decision unm-decision--version">
                 <div class="unm-decision-head">
@@ -391,7 +463,8 @@ function renderDecisionWrap(dec, epOpts) {
                     <button class="unm-undo-btn">× undo</button>
                 </div>
                 <div class="unm-decision-note">${note}</div>
-                ${dec.targetName ? renameBox(dec.targetName) : ""}
+                ${thisSection}
+                ${sonarrSection}
             </div>
         </div>`;
     }
@@ -893,19 +966,20 @@ export function showUnmatchedPanel() {
     const verPickTemp = new Map();
 
     function tryUpdateVersionRename(card) {
-        const select      = card.querySelector(".unm-ver-ep");
-        const pillGroup   = card.querySelector(".unm-ver-pills");
-        const activePill  = pillGroup?.querySelector(".unm-part-pill.active");
-        const renameDiv   = card.querySelector(".unm-rename");
-        const targetSpan  = card.querySelector(".unm-rename-target");
-        const copyBtn     = card.querySelector(".unm-copy-btn");
-        const confirmBtn  = card.querySelector(".unm-ver-confirm-btn");
+        const select       = card.querySelector(".unm-ver-ep");
+        const thisPills    = card.querySelector(".unm-ver-pills[data-role='this']");
+        const sonarrPills  = card.querySelector(".unm-ver-pills[data-role='sonarr']");
+        const activeThis   = thisPills?.querySelector(".unm-part-pill.active");
+        const activeSonarr = sonarrPills?.querySelector(".unm-part-pill.active");
+        const preview      = card.querySelector(".unm-det-preview");
+        const confirmBtn   = card.querySelector(".unm-ver-confirm-btn");
 
-        const fileId = parseInt(select?.value);
-        const verN   = activePill ? parseInt(activePill.dataset.ver) : null;
+        const fileId      = parseInt(select?.value);
+        const thisVerN    = activeThis   ? parseInt(activeThis.dataset.ver)   : null;
+        const sonarrVerN  = activeSonarr ? parseInt(activeSonarr.dataset.ver) : null;
 
-        if (!fileId || !verN) {
-            renameDiv?.classList.add("unm-rename--hidden");
+        if (!fileId || !thisVerN || !sonarrVerN) {
+            preview?.classList.add("unm-rename--hidden");
             confirmBtn?.setAttribute("disabled", "");
             return;
         }
@@ -913,17 +987,30 @@ export function showUnmatchedPanel() {
         const opt = panel._epOpts.find(o => o.fileId === fileId);
         if (!opt) return;
 
-        const target = computeVersionTargetName(opt.file, verN);
-        if (!target) return;
+        const thisTarget   = computeVersionTargetName(opt.file, thisVerN);
+        const sonarrTarget = computeVersionTargetName(opt.file, sonarrVerN);
+        if (!thisTarget || !sonarrTarget) return;
 
-        if (targetSpan) targetSpan.textContent = target;
-        if (copyBtn)    copyBtn.dataset.copy = target;
-        renameDiv?.classList.remove("unm-rename--hidden");
-        confirmBtn?.removeAttribute("disabled");
+        const sonarrOriginalRG = stripVersionFromRG(opt.file.releaseGroup ?? "");
 
         // Store pending (not persisted until user clicks Confirm)
         const path = decodeURIComponent(card.dataset.path ?? "");
-        verPickTemp.set(path, { fileId, verN, target });
+        verPickTemp.set(path, { fileId, thisVerN, sonarrVerN, thisTarget, sonarrTarget, sonarrOriginalRG });
+
+        if (preview) {
+            preview.classList.remove("unm-rename--hidden");
+            preview.innerHTML = `
+                <div class="unm-rename-lbl">This file — copy &amp; rename manually:</div>
+                <div class="unm-rename-row">
+                    <span class="unm-rename-target">${esc(thisTarget)}</span>
+                    <button class="unm-copy-btn" data-copy="${esc(thisTarget)}" title="Copy filename">📋</button>
+                </div>
+                <div class="unm-rename-lbl" style="margin-top:5px">Sonarr file ver${sonarrVerN} — rename via API:</div>
+                <div class="unm-rename-row">
+                    <span class="unm-rename-target">${esc(sonarrTarget)}</span>
+                </div>`;
+        }
+        if (confirmBtn) confirmBtn.removeAttribute("disabled");
     }
 
     // ── Preview for DETECTED cards (det-picking) ──────────────────────────────
@@ -1035,7 +1122,15 @@ export function showUnmatchedPanel() {
             const temp = verPickTemp.get(path);
             if (!temp) return;
 
-            const dec = { type: "version", episodeFileId: temp.fileId, verNum: temp.verN, targetName: temp.target };
+            const dec = {
+                type:             "version",
+                episodeFileId:    temp.fileId,
+                thisVerNum:       temp.thisVerN,
+                sonarrVerNum:     temp.sonarrVerN,
+                thisTargetName:   temp.thisTarget,
+                sonarrTargetName: temp.sonarrTarget,
+                sonarrOriginalRG: temp.sonarrOriginalRG,
+            };
             if (panel._sid) saveDecision(panel._sid, path, dec);
             verPickTemp.delete(path);
             card.dataset.decision = "version";
@@ -1171,6 +1266,55 @@ export function showUnmatchedPanel() {
                 apiBtn.classList.add("error");
                 apiBtn.textContent = "✗ Error";
                 console.warn("[RG Unmatched] API rename failed:", err.message);
+                showToast(`Rename failed: ${err.message}`);
+            }
+            return;
+        }
+
+        // ── API rename button (VERSION) ───────────────────────────────────────
+        const apiVerBtn = e.target.closest(".unm-api-ver-rename-btn");
+        if (apiVerBtn && !apiVerBtn.classList.contains("spinning") && !apiVerBtn.classList.contains("done")) {
+            const fileId = parseInt(apiVerBtn.dataset.fileid);
+            const verNum = parseInt(apiVerBtn.dataset.vernum);
+            const origRG = apiVerBtn.dataset.rg ?? "";
+            if (!fileId || !verNum) return;
+
+            apiVerBtn.classList.add("spinning");
+            apiVerBtn.textContent = "…";
+
+            try {
+                const spd = getSpData();
+                // Build new RG: "ver2-AudioJASubTHEN"
+                const newRG = origRG ? `ver${verNum}-${origRG}` : `ver${verNum}`;
+
+                const currentFile = await apiReq("GET", `/api/v3/episodefile/${fileId}`);
+                await apiReq("PUT", `/api/v3/episodefile/${fileId}`, { ...currentFile, releaseGroup: newRG });
+                await apiReq("POST", "/api/v3/command", {
+                    name:     "RenameFiles",
+                    seriesId: spd.series.id,
+                    files:    [fileId],
+                });
+
+                showToast("Sonarr rename triggered — file will be renamed shortly");
+
+                // Update stored decision + re-render without the rename button
+                const card = apiVerBtn.closest(".unm-file");
+                const path = decodeURIComponent(card?.dataset.path ?? "");
+                if (card && path && panel._sid) {
+                    const allDecs = loadDecisions(panel._sid);
+                    const curDec  = allDecs[path];
+                    if (curDec) {
+                        const updatedDec = { ...curDec, sonarrRenamed: true };
+                        saveDecision(panel._sid, path, updatedDec);
+                        card.dataset.decision = "version";
+                        swapWrap(card, renderDecisionWrap(updatedDec, panel._epOpts));
+                    }
+                }
+            } catch (err) {
+                apiVerBtn.classList.remove("spinning");
+                apiVerBtn.classList.add("error");
+                apiVerBtn.textContent = "✗ Error";
+                console.warn("[RG Unmatched] API version rename failed:", err.message);
                 showToast(`Rename failed: ${err.message}`);
             }
             return;

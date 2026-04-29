@@ -187,7 +187,9 @@
 }
 
 // ── API rename button (detected cards — triggers Sonarr rename via API) ───────
-.unm-api-rename-btn {
+// Also used for version cards (.unm-api-ver-rename-btn)
+.unm-api-rename-btn,
+.unm-api-ver-rename-btn {
     flex-shrink: 0;
     padding: 4px 10px;
     border-radius: 5px;
