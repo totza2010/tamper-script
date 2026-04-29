@@ -316,21 +316,21 @@
     &.visible { display: flex; }
 }
 
-// Series-page buttons — stacked above lib-scan-fab (bottom: 72px)
-#rg-check-btn { bottom: 120px; }
+// Series-page buttons — stacked above lib-scan-fab (bottom: 120px)
+#rg-check-btn { bottom: 168px; }
 #rg-check-btn:hover    { border-color: #4ad; color: #4ad; }
 #rg-check-btn.spinning { color: #fa0; border-color: #fa0; animation: rg-spin .8s linear infinite; }
 
-#rg-strip-btn { bottom: 168px; }
+#rg-strip-btn { bottom: 216px; }
 #rg-strip-btn:hover    { border-color: #6d6; color: #6d6; }
 #rg-strip-btn.spinning { color: #fa0; border-color: #fa0; animation: rg-spin .8s linear infinite; }
 
-#rg-suggest-btn { bottom: 216px; }
+#rg-suggest-btn { bottom: 264px; }
 #rg-suggest-btn:hover           { border-color: #fa0; color: #fa0; }
 #rg-suggest-btn.has-suggestions { border-color: #fa0; color: #fa0; background: #1e1200; }
 #rg-suggest-btn.spinning        { animation: rg-spin .8s linear infinite; }
 
-#rg-unmatched-btn { bottom: 264px; }
+#rg-unmatched-btn { bottom: 312px; }
 #rg-unmatched-btn:hover        { border-color: #f80; color: #f80; }
 #rg-unmatched-btn.has-unmatched { border-color: #f80; color: #f80; background: #1e1000; }
 #rg-unmatched-btn.spinning     { animation: rg-spin .8s linear infinite; }

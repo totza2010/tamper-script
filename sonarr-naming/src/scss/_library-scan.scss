@@ -208,7 +208,7 @@
 // ── FAB badge (series count on the 📁 button) ─────────────────────────────────
 // position:fixed (from .rg-fab-side) already acts as containing block for
 // absolutely-positioned children — no need for position:relative here.
-#lib-scan-fab { bottom: 72px; }   // permanent slot above ⚙ (24px + 40px + 8px gap)
+#lib-scan-fab { bottom: 120px; }  // permanent slot above ⚙ (72px + 40px + 8px gap)
 
 .lib-fab-badge {
     position: absolute;
