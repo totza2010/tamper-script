@@ -208,6 +208,26 @@ function detectPairedFile(item, files, epMap) {
     return null;
 }
 
+/**
+ * If the Sonarr-imported file for the same SxxExx episode ALSO carries a
+ * version indicator (verN), the two files already form a valid version pair.
+ * Returns that matched file, or null.
+ */
+function detectPairedVersionFile(item, files, epMap) {
+    const { filename } = splitPath(item.relativePath ?? item.path ?? "");
+    const parsed = parseSeasonEp(filename);
+    if (!parsed) return null;
+
+    for (const [fileId, episodes] of epMap) {
+        if (!episodes.some(e => e.seasonNumber === parsed.sn && e.episodeNumber === parsed.ep)) continue;
+        const mf = files.find(f => f.id === fileId);
+        if (!mf) continue;
+        const { filename: mfn } = splitPath(mf.relativePath ?? "");
+        if (isMultiVer(mfn)) return mf;
+    }
+    return null;
+}
+
 function buildEpisodeOptions(files, epMap) {
     const opts = [];
     for (const [fileId, episodes] of epMap) {
@@ -497,30 +517,37 @@ function renderDetectedDecisionWrap(dec, epOpts, thisNum, autoPaired = false, pa
     // ── No decision yet ───────────────────────────────────────────────────────
     if (!d) {
         if (autoPaired && pairedInfo) {
-            // Already a valid Plex pair — show info; × undo dismisses if needed
+            // Already a valid pair — show info; × undo dismisses if needed
+            const apIcon  = mode === "version" ? "🔀" : "📼";
+            const apCls   = mode === "version" ? "version" : "multipart";
+            const thisLbl = mode === "version" ? "This file" : "This file";
+            const pairLbl = mode === "version" ? "Sonarr file" : "Sonarr file";
             return `<div class="unm-decision-wrap">
-                <div class="unm-decision unm-decision--multipart">
+                <div class="unm-decision unm-decision--${apCls}">
                     <div class="unm-decision-head">
-                        <span class="unm-decision-badge">📼 ${esc(pairedInfo.thisPartLabel)} + ${esc(pairedInfo.pairPartLabel)}</span>
+                        <span class="unm-decision-badge">${apIcon} ${esc(pairedInfo.thisPartLabel)} + ${esc(pairedInfo.pairPartLabel)}</span>
                         <button class="unm-undo-btn" title="Dismiss and re-configure">× undo</button>
                     </div>
-                    <div class="unm-rename-lbl" style="margin-top:6px">This file:</div>
+                    <div class="unm-rename-lbl" style="margin-top:6px">${thisLbl}:</div>
                     <div class="unm-rename-row">
                         <span class="unm-rename-target">${esc(pairedInfo.thisFilename)}</span>
                     </div>
-                    <div class="unm-rename-lbl" style="margin-top:6px">Sonarr file:</div>
+                    <div class="unm-rename-lbl" style="margin-top:6px">${pairLbl}:</div>
                     <div class="unm-rename-row">
                         <span class="unm-rename-target">${esc(pairedInfo.pairFilename)}</span>
                     </div>
+                    <div class="unm-decision-note" style="color:#2a5a2a;margin-top:5px">Already correctly named — no rename needed.</div>
                 </div>
             </div>`;
         }
         if (autoPaired) {
             // Fallback when pairedInfo not available
+            const apIcon = mode === "version" ? "🔀" : "📼";
+            const apCls  = mode === "version" ? "version" : "multipart";
             return `<div class="unm-decision-wrap">
-                <div class="unm-decision unm-decision--multipart">
+                <div class="unm-decision unm-decision--${apCls}">
                     <div class="unm-decision-head">
-                        <span class="unm-decision-badge">📼 Auto-paired</span>
+                        <span class="unm-decision-badge">${apIcon} Auto-paired</span>
                         <button class="unm-undo-btn" title="Dismiss and re-configure">× undo</button>
                     </div>
                 </div>
@@ -602,19 +629,30 @@ function buildDetectedPairCard(item, dec, epOpts, pairedFile, mode = "part") {
         tokenFmt   = extractPartFormat(filename);
     }
 
-    const autoPaired = mode === "part" && !!pairedFile;
+    const autoPaired = !!pairedFile;
     const decType    = d?.type ?? (autoPaired ? "auto-paired" : "");
 
     let pairedInfo = null;
     let pairFilenameEncoded = "";
     if (autoPaired) {
         const { filename: pfn } = splitPath(pairedFile.relativePath ?? "");
-        pairedInfo = {
-            thisFilename:  filename,
-            pairFilename:  pfn,
-            thisPartLabel: extractPartLabel(filename),
-            pairPartLabel: extractPartLabel(pfn),
-        };
+        if (mode === "version") {
+            const thisVn = extractVersionNum(filename) ?? 1;
+            const pairVn = extractVersionNum(pfn) ?? 2;
+            pairedInfo = {
+                thisFilename:  filename,
+                pairFilename:  pfn,
+                thisPartLabel: `ver${thisVn}`,
+                pairPartLabel: `ver${pairVn}`,
+            };
+        } else {
+            pairedInfo = {
+                thisFilename:  filename,
+                pairFilename:  pfn,
+                thisPartLabel: extractPartLabel(filename),
+                pairPartLabel: extractPartLabel(pfn),
+            };
+        }
         pairFilenameEncoded = encodeURIComponent(pfn);
     }
 
@@ -769,9 +807,10 @@ export function showUnmatchedPanel() {
 
     // ── Detected multi-version cards ──────────────────────────────────────────
     const detVerCards = detectedVersion.map(i => {
+        const pairedFile = detectPairedVersionFile(i, files, epMap);
         const iPath = i.relativePath ?? i.path ?? "";
         const dec   = resolveDecision(iPath, decisions[iPath] ?? null);
-        return buildDetectedPairCard(i, dec, epOpts, null, "version");
+        return buildDetectedPairCard(i, dec, epOpts, pairedFile, "version");
     });
 
     const pendCards = pending.map(i => buildPendingCard(i));
@@ -953,6 +992,13 @@ export function showUnmatchedPanel() {
             const temp = pairPickTemp.get(path);
             if (!temp) return;
 
+            // Detect if targets already match current filenames → no rename needed
+            const thisFn = card.querySelector(".unm-filename")?.textContent?.trim() ?? "";
+            const sonarrFile = files.find(f => f.id === temp.fileId);
+            const { filename: currentSonarrFn } = splitPath(sonarrFile?.relativePath ?? "");
+            const thisAlreadyNamed   = thisFn === temp.thisTarget;
+            const sonarrAlreadyNamed = currentSonarrFn === temp.sonarrTarget;
+
             const mode = isVerToken(temp.thisToken) ? "version" : "part";
             const dec  = {
                 type:             "pair",
@@ -960,9 +1006,10 @@ export function showUnmatchedPanel() {
                 episodeFileId:    temp.fileId,
                 thisToken:        temp.thisToken,
                 sonarrToken:      temp.sonarrToken,
-                thisTargetName:   temp.thisTarget,
-                sonarrTargetName: temp.sonarrTarget,
+                thisTargetName:   thisAlreadyNamed   ? null : temp.thisTarget,
+                sonarrTargetName: sonarrAlreadyNamed ? null : temp.sonarrTarget,
                 sonarrOriginalRG: temp.sonarrOriginalRG,
+                sonarrRenamed:    sonarrAlreadyNamed,
             };
             if (panel._sid) saveDecision(panel._sid, path, dec);
             pairPickTemp.delete(path);
