@@ -8,7 +8,7 @@ import { prefixAlreadyInFilename, buildFixUI, recheckPrefixFiles } from "./prefi
 import { _buildSuggCandidates, buildRGSuggestionUI, recheckRGSuggestions } from "./suggestion.js";
 import { openSettings } from "./settings.js";
 import { checkUnmatchedFiles, showUnmatchedPanel } from "./unmatched.js";
-import { isLibraryPage, initLibraryScan, cleanupLibraryScan } from "./library-scan.js";
+import { isLibraryPage, initLibraryScan, cleanupLibraryScan, updateCacheEntry } from "./library-scan.js";
 
 // ── Series page orchestration ─────────────────────────────────────────────────
 
@@ -145,7 +145,9 @@ export async function checkSeriesPage() {
         document.getElementById("rg-suggest-btn")?.classList.add("visible");
         // rg-unmatched-btn is shown by checkUnmatchedFiles() only when files are found
         injectEpEditBtns();
-        checkUnmatchedFiles(); // fire-and-forget; shows button + badge when files found
+        checkUnmatchedFiles().then(result => {   // shows button + badge; also updates library cache
+            if (result) updateCacheEntry(result.series, result.count);
+        });
 
         const affected = files
             .filter(f => prefixAlreadyInFilename(f))

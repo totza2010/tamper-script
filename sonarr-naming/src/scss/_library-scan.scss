@@ -41,7 +41,7 @@
     align-items: center;
     gap: 6px;
 }
-.lsp-rescan-btn {
+.lsp-scan-btn {
     padding: 3px 10px;
     border-radius: 5px;
     border: 1px solid #3a2800;
@@ -51,7 +51,8 @@
     font-weight: bold;
     cursor: pointer;
     transition: all .14s;
-    &:hover { border-color: #f80; background: #2a1800; }
+    &:hover:not(:disabled) { border-color: #f80; background: #2a1800; }
+    &:disabled { opacity: 0.5; cursor: default; }
 }
 .lsp-close {
     padding: 3px 8px;
@@ -147,6 +148,25 @@
     text-align: center;
     padding: 24px 0;
     margin: 0;
+}
+
+// ── FAB badge (series count on the 📁 button) ─────────────────────────────────
+#lib-scan-fab { position: relative; }   // positioning context for the badge
+
+.lib-fab-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    background: #c00;
+    color: #fff;
+    font-size: 9px;
+    font-weight: bold;
+    border-radius: 8px;
+    padding: 1px 4px;
+    min-width: 14px;
+    text-align: center;
+    pointer-events: none;
+    line-height: 14px;
 }
 
 // ── Badge on series poster cards ──────────────────────────────────────────────

@@ -542,7 +542,7 @@ function buildSection(cls, label, cards) {
 
 export async function checkUnmatchedFiles() {
     const _spData = getSpData();
-    if (!_spData?.series) return;
+    if (!_spData?.series) return null;
 
     const { series } = _spData;
     const btn = document.getElementById("rg-unmatched-btn");
@@ -555,18 +555,24 @@ export async function checkUnmatchedFiles() {
         );
 
         _spData.unmatchedFiles = items;
-        if (!btn) return;
 
         const noEpMatch = items.filter(i => !(i.episodes?.length > 0)).length;
-        if (noEpMatch > 0) {
-            btn.classList.add("visible", "has-unmatched");
-            btn.dataset.count = noEpMatch;
-            btn.title = `${noEpMatch} file${noEpMatch > 1 ? "s" : ""} with no episode match`;
-        } else {
-            btn.classList.remove("visible", "has-unmatched");
-            delete btn.dataset.count;
+        if (btn) {
+            if (noEpMatch > 0) {
+                btn.classList.add("visible", "has-unmatched");
+                btn.dataset.count = noEpMatch;
+                btn.title = `${noEpMatch} file${noEpMatch > 1 ? "s" : ""} with no episode match`;
+            } else {
+                btn.classList.remove("visible", "has-unmatched");
+                delete btn.dataset.count;
+            }
         }
-    } catch (e) { console.warn("[RG Unmatched]", e.message); }
+
+        return { series, count: noEpMatch };
+    } catch (e) {
+        console.warn("[RG Unmatched]", e.message);
+        return null;
+    }
 }
 
 // ── Panel ─────────────────────────────────────────────────────────────────────
