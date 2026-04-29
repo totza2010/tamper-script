@@ -6,10 +6,10 @@ import { showToast } from "./utils.js";
 import { showUnmatchedPanel } from "./unmatched.js";
 
 // ── Persistence ───────────────────────────────────────────────────────────────
-// Slim entries only; full data fetched on-demand when opening a series panel.
+// entry: { seriesId, count, allHandled, title, titleSlug, path }
 
 const CACHE_KEY   = `lib_unm_${location.hostname}`;
-const CONCURRENCY = 5;   // max simultaneous manualimport requests during scan
+const CONCURRENCY = 5;
 
 function saveCache() {
     GM_setValue(CACHE_KEY, JSON.stringify({
@@ -30,7 +30,6 @@ function loadCache() {
 }
 
 // ── Runtime state ─────────────────────────────────────────────────────────────
-// entry: { seriesId, count, title, titleSlug, path }
 const _cache  = new Map();
 let _scanTime = null;
 let _scanning = false;
@@ -45,44 +44,70 @@ export function isLibraryPage() {
     return /^\/(series)?\/?$/.test(location.pathname);
 }
 
+// ── One-time global FAB init — called once at script startup ──────────────────
+export function initLibraryFab() {
+    loadCache();
+    _getOrCreateFab().classList.add("visible");
+    _refreshFabBadge();
+}
+
 // ── Called from series page after checkUnmatchedFiles() ──────────────────────
-// Updates the per-series entry in the library cache silently.
-export function updateCacheEntry(series, count) {
+export function updateCacheEntry(series, count, allHandled = false) {
     if (count > 0) {
         _cache.set(series.id, {
-            seriesId:  series.id,
+            seriesId:   series.id,
             count,
-            title:     series.title,
-            titleSlug: series.titleSlug,
-            path:      series.path,
+            allHandled,
+            title:      series.title,
+            titleSlug:  series.titleSlug,
+            path:       series.path,
         });
     } else {
-        _cache.delete(series.id);   // series now clean — remove from list
+        _cache.delete(series.id);
     }
     saveCache();
     _refreshFabBadge();
     _refreshPanelRow(series.id, count, series.title, series.titleSlug);
 }
 
-// ── Init / cleanup ────────────────────────────────────────────────────────────
+// ── Alert bar shown on series pages that are in the cache ────────────────────
+export function showSeriesAlert(series, count, allHandled) {
+    hideSeriesAlert();
+    const bar = document.createElement("div");
+    bar.id        = "lib-scan-alert";
+    bar.className = `lib-scan-alert ${allHandled ? "lib-scan-alert--yellow" : "lib-scan-alert--red"}`;
 
+    const label = allHandled
+        ? `📁 ${count} unmatched file${count !== 1 ? "s" : ""} — all classified (multi / ignore)`
+        : `📁 ${count} unmatched file${count !== 1 ? "s" : ""} with no match in this series`;
+
+    bar.innerHTML = `
+        <span class="lib-alert-msg">${label}</span>
+        <button class="lib-alert-view-btn">View files ↗</button>
+        <button class="lib-alert-close" title="Dismiss">✕</button>`;
+
+    bar.querySelector(".lib-alert-view-btn").addEventListener("click", () => showUnmatchedPanel());
+    bar.querySelector(".lib-alert-close").addEventListener("click",    () => hideSeriesAlert());
+
+    document.body.appendChild(bar);
+}
+
+export function hideSeriesAlert() {
+    document.getElementById("lib-scan-alert")?.remove();
+}
+
+// ── Library page init ─────────────────────────────────────────────────────────
 export function initLibraryScan() {
-    loadCache();
-
-    const fab = _getOrCreateFab();
-    fab.classList.add("visible");
+    _getOrCreateFab().classList.add("visible");
     _refreshFabBadge();
-
-    // Restore badges on cards from cache (no network call)
     injectBadges();
     _startBadgeObserver();
-
-    // Auto-open panel if there are cached results
     if (_cache.size > 0) showPanel();
 }
 
+// ── Cleanup when leaving library page ────────────────────────────────────────
+// FAB stays visible on all pages — only disconnect the badge observer.
 export function cleanupLibraryScan() {
-    document.getElementById("lib-scan-fab")?.classList.remove("visible");
     document.getElementById("lib-scan-panel")?.classList.remove("open");
     _badgeObs?.disconnect();
     _badgeObs = null;
@@ -96,9 +121,9 @@ function _getOrCreateFab() {
     if (fab) return fab;
 
     fab = document.createElement("div");
-    fab.id        = "lib-scan-fab";
-    fab.className = "rg-fab-side";
-    fab.title     = "Unmatched files in library";
+    fab.id          = "lib-scan-fab";
+    fab.className   = "rg-fab-side";
+    fab.title       = "Unmatched files in library";
     fab.textContent = "📁";
     fab.addEventListener("click", () => {
         const panel = document.getElementById("lib-scan-panel");
@@ -157,12 +182,26 @@ function showPanel() {
         () => panel.classList.remove("open"));
     panel.querySelector(".lsp-scan-btn").addEventListener("click",
         () => startScan());
+
+    // Delegated handler for both "open series" and "view unmatched" clicks
     panel.querySelector(".lsp-list").addEventListener("click", e => {
-        const btn = e.target.closest(".lsp-series-btn");
-        if (btn) _openSeriesPanel(parseInt(btn.dataset.id));
+        // ↗ navigate to series page
+        const openBtn = e.target.closest(".lsp-open-btn");
+        if (openBtn) {
+            e.stopPropagation();
+            const slug = openBtn.dataset.slug;
+            if (slug) {
+                panel.classList.remove("open");
+                history.pushState(null, "", `/series/${slug}`);
+                window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+            }
+            return;
+        }
+        // clicking the row body → open unmatched panel
+        const row = e.target.closest(".lsp-series-btn");
+        if (row) _openSeriesPanel(parseInt(row.dataset.id));
     });
 
-    // Populate from current cache
     [..._cache.values()].forEach(_appendRow);
     _updateSubhead();
 }
@@ -180,7 +219,7 @@ function _updateSubhead() {
         return;
     }
 
-    if (scanBtn) { scanBtn.disabled = false; scanBtn.textContent = "↺ Re-scan"; }
+    if (scanBtn) { scanBtn.disabled = false; scanBtn.textContent = _scanTime ? "↺ Re-scan" : "▶ Scan all"; }
 
     const count = _cache.size;
     const stamp = _scanTime ? ` · ${_timeAgo(_scanTime)}` : "";
@@ -207,13 +246,15 @@ function _appendRow(entry) {
     if (!list) return;
     if (list.querySelector(`[data-id="${entry.seriesId}"]`)) return;
 
-    const btn = document.createElement("button");
-    btn.className  = "lsp-series-btn";
-    btn.dataset.id = entry.seriesId;
-    btn.innerHTML  = `
+    const row = document.createElement("div");
+    row.className    = "lsp-series-btn";
+    row.dataset.id   = entry.seriesId;
+    row.dataset.slug = entry.titleSlug ?? "";
+    row.innerHTML = `
         <span class="lsp-series-title">${_esc(entry.title)}</span>
-        <span class="lsp-series-count">${entry.count} file${entry.count !== 1 ? "s" : ""}</span>`;
-    list.appendChild(btn);
+        <span class="lsp-series-count">${entry.count} file${entry.count !== 1 ? "s" : ""}</span>
+        <button class="lsp-open-btn" data-slug="${_esc(entry.titleSlug ?? "")}" title="Open series page">↗</button>`;
+    list.appendChild(row);
 }
 
 function _refreshPanelRow(seriesId, count, title, titleSlug) {
@@ -257,7 +298,6 @@ async function startScan() {
         _total = active.length;
         _updateSubhead();
 
-        // ── Semaphore: max CONCURRENCY requests in-flight at once ──────────────
         let idx = 0;
         async function worker() {
             while (idx < active.length) {
@@ -271,11 +311,12 @@ async function startScan() {
                     const count = items.filter(it => !(it.episodes?.length > 0)).length;
                     if (count > 0) {
                         const entry = {
-                            seriesId:  series.id,
+                            seriesId:   series.id,
                             count,
-                            title:     series.title,
-                            titleSlug: series.titleSlug,
-                            path:      series.path,
+                            allHandled: false,
+                            title:      series.title,
+                            titleSlug:  series.titleSlug,
+                            path:       series.path,
                         };
                         _cache.set(series.id, entry);
                         _appendRow(entry);
@@ -287,7 +328,6 @@ async function startScan() {
             }
         }
 
-        // Launch CONCURRENCY workers — they pull from the shared idx counter
         await Promise.all(Array.from({ length: CONCURRENCY }, worker));
 
         _scanTime = Date.now();
@@ -305,6 +345,7 @@ async function startScan() {
 }
 
 // ── Open series unmatched panel ────────────────────────────────────────────────
+// Fetches fresh data on-demand; also refreshes the cache if count changed.
 
 async function _openSeriesPanel(seriesId) {
     const entry = _cache.get(seriesId);
@@ -323,6 +364,19 @@ async function _openSeriesPanel(seriesId) {
             apiReq("GET", `/api/v3/episodefile?seriesId=${seriesId}`),
             apiReq("GET", `/api/v3/episode?seriesId=${seriesId}`),
         ]);
+
+        // Refresh cache with the latest count — series may have been re-matched
+        const freshCount = items.filter(it => !(it.episodes?.length > 0)).length;
+        if (freshCount !== entry.count || freshCount === 0) {
+            if (freshCount === 0) {
+                _cache.delete(seriesId);
+            } else {
+                _cache.set(seriesId, { ...entry, count: freshCount });
+            }
+            saveCache();
+            _refreshFabBadge();
+            _refreshPanelRow(seriesId, freshCount, series.title, series.titleSlug);
+        }
 
         const epMap = new Map();
         episodes.filter(e => e.episodeFileId).forEach(e => {

@@ -556,19 +556,31 @@ export async function checkUnmatchedFiles() {
 
         _spData.unmatchedFiles = items;
 
-        const noEpMatch = items.filter(i => !(i.episodes?.length > 0)).length;
+        const unmatchedItems = items.filter(i => !(i.episodes?.length > 0));
+        const count = unmatchedItems.length;
+
+        // Check if every unmatched file already has a saved decision (multi/ignore/etc.)
+        let allHandled = false;
+        if (count > 0) {
+            const decisions = loadDecisions(series.id);
+            allHandled = unmatchedItems.every(i => {
+                const p = i.relativePath ?? i.path ?? "";
+                return p && decisions[p] != null;
+            });
+        }
+
         if (btn) {
-            if (noEpMatch > 0) {
+            if (count > 0) {
                 btn.classList.add("visible", "has-unmatched");
-                btn.dataset.count = noEpMatch;
-                btn.title = `${noEpMatch} file${noEpMatch > 1 ? "s" : ""} with no episode match`;
+                btn.dataset.count = count;
+                btn.title = `${count} file${count > 1 ? "s" : ""} with no episode match`;
             } else {
                 btn.classList.remove("visible", "has-unmatched");
                 delete btn.dataset.count;
             }
         }
 
-        return { series, count: noEpMatch };
+        return { series, count, allHandled };
     } catch (e) {
         console.warn("[RG Unmatched]", e.message);
         return null;
