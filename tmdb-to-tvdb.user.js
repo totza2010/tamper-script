@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         TMDB to TVDB Episode Filler
 // @namespace    https://tampermonkey.net/
-// @version      2.0
-// @description  Fetch episode data from TMDB and auto-fill TVDB bulk add form with preview/reorder
+// @version      2.1
+// @description  Fetch episode data from TMDB and auto-fill TVDB bulk add form with preview/reorder. Supports manual mode when show is not on TMDB.
 // @author       You
 // @match        https://www.thetvdb.com/series/*/seasons/official/*/bulkadd
 // @grant        GM_setValue
@@ -16,11 +16,9 @@
 
     const MAX_ROWS = 25;
 
-    // Auto-detect season from URL
     const urlMatch = window.location.pathname.match(/\/seasons\/official\/(\d+)\/bulkadd/);
     const urlSeason = urlMatch ? urlMatch[1] : '1';
 
-    // ── Helper: get starting episode number from the form ────────────────────
     function getFormStartEpisode() {
         const firstNumInput = document.querySelector('fieldset.noformat input[name="number[]"]');
         if (!firstNumInput) return 1;
@@ -47,7 +45,7 @@
             background: #2a2a3e; border: 1px solid #555; color: #eee;
             border-radius: 4px; font-size: 13px;
         }
-        .tm-panel input:focus, .tm-panel textarea:focus {
+        .tm-panel input:focus, .tm-panel textarea:focus, .tm-panel select:focus {
             border-color: #01b4e4; outline: none;
         }
         .tm-label {
@@ -69,6 +67,32 @@
             display: none; padding: 8px 10px;
             border-radius: 4px; font-size: 13px; margin-bottom: 13px;
         }
+        /* Mode tabs */
+        .tm-tabs {
+            display: flex; gap: 0; margin-bottom: 18px;
+            border-bottom: 2px solid #2a2a45;
+        }
+        .tm-tab {
+            padding: 8px 18px; cursor: pointer; font-size: 13px;
+            font-weight: bold; color: #778; border-bottom: 2px solid transparent;
+            margin-bottom: -2px; user-select: none; transition: color .15s;
+        }
+        .tm-tab:hover { color: #aac; }
+        .tm-tab.active { color: #01b4e4; border-bottom-color: #01b4e4; }
+        /* Air-day checkboxes */
+        .tm-days {
+            display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px;
+        }
+        .tm-day-label {
+            display: flex; align-items: center; gap: 4px;
+            background: #2a2a3e; border: 1px solid #444; border-radius: 4px;
+            padding: 4px 9px; font-size: 12px; cursor: pointer;
+            transition: border-color .15s;
+        }
+        .tm-day-label:has(input:checked) {
+            border-color: #01b4e4; background: #1a2a3e; color: #01b4e4;
+        }
+        .tm-day-label input { width: auto; margin: 0; }
         /* Preview table */
         .tm-preview-table {
             width: 100%; border-collapse: collapse; font-size: 12px;
@@ -116,28 +140,80 @@
 
     const fetchPanel = document.createElement('div');
     fetchPanel.className = 'tm-panel';
-    fetchPanel.style.cssText = 'width:400px;max-width:94vw;padding:26px 24px;';
+    fetchPanel.style.cssText = 'width:420px;max-width:94vw;padding:26px 24px;';
     fetchPanel.innerHTML = `
-        <h3 style="margin:0 0 18px;color:#01b4e4;font-size:17px">Fetch Episodes from TMDB</h3>
+        <h3 style="margin:0 0 14px;color:#01b4e4;font-size:17px">Fetch Episodes</h3>
 
-        <div class="tm-field">
-            <label class="tm-label">TMDB API Key (v3)</label>
-            <input id="tm-key" type="password" placeholder="Paste your TMDB v3 API key">
+        <!-- Mode tabs -->
+        <div class="tm-tabs">
+            <div class="tm-tab active" data-mode="tmdb">TMDB</div>
+            <div class="tm-tab" data-mode="manual">Manual</div>
         </div>
-        <div class="tm-field">
-            <label class="tm-label">TMDB Show ID</label>
-            <input id="tm-show" type="text" placeholder="e.g. 17454">
+
+        <!-- ── TMDB section ── -->
+        <div id="tm-tmdb-section">
+            <div class="tm-field">
+                <label class="tm-label">TMDB API Key (v3)</label>
+                <input id="tm-key" type="password" placeholder="Paste your TMDB v3 API key">
+            </div>
+            <div class="tm-field">
+                <label class="tm-label">TMDB Show ID</label>
+                <input id="tm-show" type="text" placeholder="e.g. 17454">
+            </div>
+            <div class="tm-field">
+                <label class="tm-label">Season Number</label>
+                <input id="tm-season" type="number" value="${urlSeason}" min="1">
+            </div>
+            <div class="tm-field">
+                <label class="tm-label">Language</label>
+                <input id="tm-lang" type="text" value="en-US" placeholder="en-US / th-TH / zh-TW">
+                <p style="margin:4px 0 0;font-size:11px;color:#666">
+                    Affects episode names &amp; overviews from TMDB.
+                </p>
+            </div>
         </div>
-        <div class="tm-field">
-            <label class="tm-label">Season Number</label>
-            <input id="tm-season" type="number" value="${urlSeason}" min="1">
-        </div>
-        <div class="tm-field">
-            <label class="tm-label">Language</label>
-            <input id="tm-lang" type="text" value="en-US" placeholder="en-US / th-TH / zh-TW">
-            <p style="margin:4px 0 0;font-size:11px;color:#666">
-                Affects episode names & overviews from TMDB.
-            </p>
+
+        <!-- ── Manual section ── -->
+        <div id="tm-manual-section" style="display:none">
+            <div class="tm-field">
+                <label class="tm-label">Season Number</label>
+                <input id="tm-m-season" type="number" value="${urlSeason}" min="1">
+            </div>
+            <div class="tm-field">
+                <label class="tm-label">Number of Episodes</label>
+                <input id="tm-m-eps" type="number" value="13" min="1" max="${MAX_ROWS}">
+            </div>
+            <div class="tm-field">
+                <label class="tm-label">Episode Name Prefix</label>
+                <input id="tm-m-prefix" type="text" value="Episode" placeholder="e.g. Episode, EP, ตอนที่">
+            </div>
+            <div class="tm-field">
+                <label class="tm-label">Start Episode Number</label>
+                <input id="tm-m-startep" type="number" value="1" min="1">
+            </div>
+            <div class="tm-field">
+                <label class="tm-label">Air Start Date</label>
+                <input id="tm-m-startdate" type="date">
+            </div>
+            <div class="tm-field">
+                <label class="tm-label">Air Days (select one or more)</label>
+                <div class="tm-days">
+                    <label class="tm-day-label"><input type="checkbox" class="tm-day-cb" value="0"> Sun</label>
+                    <label class="tm-day-label"><input type="checkbox" class="tm-day-cb" value="1"> Mon</label>
+                    <label class="tm-day-label"><input type="checkbox" class="tm-day-cb" value="2"> Tue</label>
+                    <label class="tm-day-label"><input type="checkbox" class="tm-day-cb" value="3"> Wed</label>
+                    <label class="tm-day-label"><input type="checkbox" class="tm-day-cb" value="4"> Thu</label>
+                    <label class="tm-day-label"><input type="checkbox" class="tm-day-cb" value="5"> Fri</label>
+                    <label class="tm-day-label"><input type="checkbox" class="tm-day-cb" value="6"> Sat</label>
+                </div>
+                <p style="margin:5px 0 0;font-size:11px;color:#666">
+                    Leave all unchecked to space episodes 7 days apart.
+                </p>
+            </div>
+            <div class="tm-field">
+                <label class="tm-label">Runtime (minutes, optional)</label>
+                <input id="tm-m-runtime" type="number" value="" min="0" placeholder="e.g. 45">
+            </div>
         </div>
 
         <div id="tm-fetch-status" class="tm-status"></div>
@@ -150,13 +226,27 @@
     fetchOverlay.appendChild(fetchPanel);
     document.body.appendChild(fetchOverlay);
 
-    // Restore saved key
+    // Restore saved values
     const savedKey = GM_getValue('tmdb_apikey', '');
     if (savedKey) fetchPanel.querySelector('#tm-key').value = savedKey;
-
-    // Restore saved show ID
     const savedShowId = GM_getValue('tmdb_showid', '');
     if (savedShowId) fetchPanel.querySelector('#tm-show').value = savedShowId;
+
+    // Default start date to today
+    fetchPanel.querySelector('#tm-m-startdate').value = new Date().toISOString().split('T')[0];
+
+    // ── Tab switching ─────────────────────────────────────────────────────────
+    let currentMode = 'tmdb';
+    fetchPanel.querySelectorAll('.tm-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            fetchPanel.querySelectorAll('.tm-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            currentMode = tab.dataset.mode;
+            fetchPanel.querySelector('#tm-tmdb-section').style.display = currentMode === 'tmdb' ? '' : 'none';
+            fetchPanel.querySelector('#tm-manual-section').style.display = currentMode === 'manual' ? '' : 'none';
+            setFetchStatus('', '');
+        });
+    });
 
     // ══════════════════════════════════════════════════════════════════════════
     // PREVIEW MODAL
@@ -213,7 +303,10 @@
         if (e.target === fetchOverlay) fetchOverlay.classList.remove('active');
     });
 
-    fetchPanel.querySelector('#tm-go').addEventListener('click', doFetch);
+    fetchPanel.querySelector('#tm-go').addEventListener('click', () => {
+        if (currentMode === 'tmdb') doFetch();
+        else doManual();
+    });
 
     previewPanel.querySelector('#tm-preview-back').addEventListener('click', () => {
         previewOverlay.classList.remove('active');
@@ -244,12 +337,99 @@
         el.style.color = type === 'ok' ? '#6f6' : type === 'err' ? '#f66' : '#ffb';
     }
 
+    // ── Manual episode generation ─────────────────────────────────────────────
+    function doManual() {
+        const totalEps = parseInt(fetchPanel.querySelector('#tm-m-eps').value, 10);
+        const prefix    = fetchPanel.querySelector('#tm-m-prefix').value.trim() || 'Episode';
+        const startEpN  = parseInt(fetchPanel.querySelector('#tm-m-startep').value, 10);
+        const startDate = fetchPanel.querySelector('#tm-m-startdate').value;
+        const runtime   = fetchPanel.querySelector('#tm-m-runtime').value.trim();
+
+        if (!totalEps || totalEps < 1) {
+            setFetchStatus('Please enter a valid number of episodes.', 'err');
+            return;
+        }
+        if (!startDate) {
+            setFetchStatus('Please enter an air start date.', 'err');
+            return;
+        }
+
+        const checkedDays = Array.from(fetchPanel.querySelectorAll('.tm-day-cb:checked'))
+            .map(cb => parseInt(cb.value, 10))
+            .sort((a, b) => a - b);
+
+        const episodes = buildManualEpisodes(startEpN, totalEps, startDate, checkedDays, prefix, runtime);
+
+        setFetchStatus('', '');
+        fetchOverlay.classList.remove('active');
+        showPreview(episodes, startEpN, totalEps, true);
+    }
+
+    // Build episodes with calculated air dates.
+    // airDays: sorted array of weekday numbers (0=Sun…6=Sat).
+    // If empty, episodes are spaced 7 days apart.
+    function buildManualEpisodes(startEp, total, startDateStr, airDays, prefix, runtime) {
+        const episodes = [];
+        // Parse start date as local date (avoid timezone shifts)
+        const [y, m, d] = startDateStr.split('-').map(Number);
+        let cur = new Date(y, m - 1, d);
+
+        const useDays = airDays.length > 0;
+
+        // When using specific air days, advance cur to the first matching day on or after startDate
+        if (useDays) {
+            let safety = 0;
+            while (!airDays.includes(cur.getDay()) && safety++ < 7) {
+                cur.setDate(cur.getDate() + 1);
+            }
+        }
+
+        for (let i = 0; i < total; i++) {
+            const epNum = startEp + i;
+            const dateStr = toDateStr(cur);
+
+            episodes.push({
+                episode_number: epNum,
+                name: `${prefix} ${epNum}`,
+                overview: '',
+                air_date: dateStr,
+                runtime: runtime,
+            });
+
+            if (useDays) {
+                // Advance cur to the next air day (can be same day list in next week)
+                const currentDayPos = airDays.indexOf(cur.getDay());
+                const nextDayPos    = currentDayPos + 1;
+                if (nextDayPos < airDays.length) {
+                    // Still within this week's schedule
+                    const daysUntilNext = airDays[nextDayPos] - cur.getDay();
+                    cur.setDate(cur.getDate() + daysUntilNext);
+                } else {
+                    // Wrap to next week's first air day
+                    const daysUntilFirst = 7 - cur.getDay() + airDays[0];
+                    cur.setDate(cur.getDate() + daysUntilFirst);
+                }
+            } else {
+                cur.setDate(cur.getDate() + 7);
+            }
+        }
+
+        return episodes;
+    }
+
+    function toDateStr(date) {
+        const y  = date.getFullYear();
+        const m  = String(date.getMonth() + 1).padStart(2, '0');
+        const d  = String(date.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+    }
+
     // ── Fetch from TMDB ───────────────────────────────────────────────────────
     function doFetch() {
         const apiKey = fetchPanel.querySelector('#tm-key').value.trim();
         const showId = fetchPanel.querySelector('#tm-show').value.trim();
         const season = fetchPanel.querySelector('#tm-season').value.trim();
-        const lang = fetchPanel.querySelector('#tm-lang').value.trim() || 'en-US';
+        const lang   = fetchPanel.querySelector('#tm-lang').value.trim() || 'en-US';
 
         if (!apiKey || !showId || !season) {
             setFetchStatus('Please fill in API Key, Show ID, and Season.', 'err');
@@ -280,10 +460,7 @@
                     return;
                 }
 
-                // Determine starting episode from form
                 const startEp = getFormStartEpisode();
-
-                // Find episodes starting from startEp, up to MAX_ROWS
                 const startIdx = allEpisodes.findIndex(e => e.episode_number >= startEp);
                 if (startIdx === -1) {
                     setFetchStatus(`No TMDB episode found with episode number ≥ ${startEp}.`, 'err');
@@ -293,7 +470,15 @@
 
                 setFetchStatus('', '');
                 fetchOverlay.classList.remove('active');
-                showPreview(sliced, startEp, allEpisodes.length);
+
+                const mapped = sliced.map(ep => ({
+                    episode_number: ep.episode_number,
+                    name: ep.name || '',
+                    overview: ep.overview || '',
+                    air_date: ep.air_date || '',
+                    runtime: ep.runtime != null ? String(ep.runtime) : '',
+                }));
+                showPreview(mapped, startEp, allEpisodes.length, false);
             },
             onerror() {
                 setFetchStatus('Network error. Check API key and internet connection.', 'err');
@@ -302,21 +487,19 @@
     }
 
     // ── Preview modal ─────────────────────────────────────────────────────────
-    // We store the editable episode list as an array of objects in memory.
     let previewEpisodes = [];
 
-    function showPreview(episodes, startEp, totalInSeason) {
-        previewEpisodes = episodes.map(ep => ({
-            episode_number: ep.episode_number,
-            name: ep.name || '',
-            overview: ep.overview || '',
-            air_date: ep.air_date || '',
-            runtime: ep.runtime != null ? String(ep.runtime) : '',
-        }));
+    function showPreview(episodes, startEp, total, isManual) {
+        previewEpisodes = episodes.slice(0, MAX_ROWS);
 
         const subtitle = previewPanel.querySelector('#tm-preview-subtitle');
-        subtitle.textContent =
-            `Form starts at episode ${startEp} · Showing ${previewEpisodes.length} of ${totalInSeason} episodes (TVDB limit: ${MAX_ROWS})`;
+        if (isManual) {
+            subtitle.textContent =
+                `Manual mode · Season ${fetchPanel.querySelector('#tm-m-season').value} · Showing ${previewEpisodes.length} episode(s) (TVDB limit: ${MAX_ROWS})`;
+        } else {
+            subtitle.textContent =
+                `Form starts at episode ${startEp} · Showing ${previewEpisodes.length} of ${total} episodes (TVDB limit: ${MAX_ROWS})`;
+        }
 
         renderPreviewTable();
         setPreviewStatus('', '');
@@ -354,17 +537,15 @@
                 </td>
             `;
 
-            // Sync edits back to previewEpisodes
             tr.querySelectorAll('.ep-field').forEach(input => {
                 input.addEventListener('input', () => {
                     previewEpisodes[idx][input.dataset.field] = input.value;
                 });
             });
 
-            // Move buttons
             tr.querySelectorAll('.tm-move-btn').forEach(btn => {
                 btn.addEventListener('click', () => {
-                    syncFieldsFromDOM(); // save current edits before reorder
+                    syncFieldsFromDOM();
                     const dir = btn.dataset.dir;
                     const swapIdx = dir === 'up' ? idx - 1 : idx + 1;
                     if (swapIdx < 0 || swapIdx >= previewEpisodes.length) return;
@@ -378,7 +559,6 @@
         });
     }
 
-    // Read all current DOM input values back into previewEpisodes before reorder
     function syncFieldsFromDOM() {
         const tbody = previewPanel.querySelector('#tm-preview-body');
         tbody.querySelectorAll('tr[data-idx]').forEach(tr => {
@@ -402,7 +582,6 @@
         const addBtn = fieldset.querySelector('button.multirow-add');
         let rows = getRows(fieldset);
 
-        // Add rows until we have enough (up to MAX_ROWS)
         const needed = Math.min(previewEpisodes.length, MAX_ROWS);
         let attempts = 0;
         while (rows.length < needed && addBtn && attempts < 30) {
@@ -414,11 +593,11 @@
         previewEpisodes.forEach((ep, i) => {
             if (i >= rows.length || i >= MAX_ROWS) return;
             const row = rows[i];
-            setVal(row, 'input[name="number[]"]', ep.episode_number);
-            setVal(row, 'input[name="name[]"]', ep.name);
+            setVal(row, 'input[name="number[]"]',    ep.episode_number);
+            setVal(row, 'input[name="name[]"]',       ep.name);
             setVal(row, 'textarea[name="overview[]"]', ep.overview);
-            setVal(row, 'input[name="date[]"]', ep.air_date);
-            setVal(row, 'input[name="runtime[]"]', ep.runtime);
+            setVal(row, 'input[name="date[]"]',        ep.air_date);
+            setVal(row, 'input[name="runtime[]"]',     ep.runtime);
         });
 
         setPreviewStatus(`Done! Filled ${needed} episode(s) into the form.`, 'ok');
@@ -437,7 +616,7 @@
         const el = row.querySelector(selector);
         if (!el) return;
         el.value = value ?? '';
-        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('input',  { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
     }
 
