@@ -6,9 +6,6 @@
 // and all UI components used by both TVDB and TMDB sides.
 // ════════════════════════════════════════════════════════════════════════════
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-export const MAX_ROWS = 25;
-
 // ── Site detection ────────────────────────────────────────────────────────────
 export const isTvdb = location.hostname.includes('thetvdb.com');
 export const isTmdb = location.hostname.includes('themoviedb.org');
@@ -62,6 +59,44 @@ export function toDateStr(date) {
         String(date.getMonth() + 1).padStart(2, '0'),
         String(date.getDate()).padStart(2, '0'),
     ].join('-');
+}
+
+/**
+ * Normalize any date value to "YYYY-MM-DD" string.
+ * Handles: Date objects, "2026-04-24", ISO timestamps,
+ * and d/m/yyyy display format used by TMDB's Kendo grid.
+ */
+export function normDate(d) {
+    if (!d) return '';
+    if (d instanceof Date) return isNaN(d) ? '' : toDateStr(d);
+    const s = String(d).trim();
+    if (!s) return '';
+    // Already YYYY-MM-DD (or ISO timestamp)
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+    // d/m/yyyy or dd/mm/yyyy  (TMDB Kendo display format)
+    const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (dmy) {
+        const [, dd, mm, yyyy] = dmy;
+        return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+    }
+    // Generic fallback
+    const parsed = new Date(s);
+    return isNaN(parsed) ? s : toDateStr(parsed);
+}
+
+/**
+ * Build a subtitle parts array from a list of episodes that have _exists/_diff flags.
+ * Returns e.g. ["5 ตอนใหม่", "20 มีแล้ว", "2 ข้อมูลต่าง"]
+ * Caller joins however it likes, e.g. parts.join(' · ')
+ */
+export function episodeStatusParts(episodes) {
+    const newCount    = episodes.filter(e => !e._exists).length;
+    const existsCount = episodes.filter(e =>  e._exists && !e._diff).length;
+    const diffCount   = episodes.filter(e =>  e._diff).length;
+    const parts = [`${newCount} ตอนใหม่`];
+    if (existsCount) parts.push(`${existsCount} มีแล้ว`);
+    if (diffCount)   parts.push(`${diffCount} ข้อมูลต่าง`);
+    return parts;
 }
 
 export function gmRequest(opts) {

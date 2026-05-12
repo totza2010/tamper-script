@@ -10,7 +10,6 @@
 
 __webpack_require__.r(__webpack_exports__);
 /* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   MAX_ROWS: () => (/* binding */ MAX_ROWS),
 /* harmony export */   buildManualEpisodes: () => (/* binding */ buildManualEpisodes),
 /* harmony export */   buildManualSectionHtml: () => (/* binding */ buildManualSectionHtml),
 /* harmony export */   clBtn: () => (/* binding */ clBtn),
@@ -19,11 +18,13 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   configOverlay: () => (/* binding */ configOverlay),
 /* harmony export */   configPanel: () => (/* binding */ configPanel),
 /* harmony export */   dc: () => (/* binding */ dc),
+/* harmony export */   episodeStatusParts: () => (/* binding */ episodeStatusParts),
 /* harmony export */   escHtml: () => (/* binding */ escHtml),
 /* harmony export */   getSavedEpisodes: () => (/* binding */ getSavedEpisodes),
 /* harmony export */   gmRequest: () => (/* binding */ gmRequest),
 /* harmony export */   isTmdb: () => (/* binding */ isTmdb),
 /* harmony export */   isTvdb: () => (/* binding */ isTvdb),
+/* harmony export */   normDate: () => (/* binding */ normDate),
 /* harmony export */   pget: () => (/* binding */ pget),
 /* harmony export */   previewOverlay: () => (/* binding */ previewOverlay),
 /* harmony export */   previewPanel: () => (/* binding */ previewPanel),
@@ -52,9 +53,6 @@ __webpack_require__.r(__webpack_exports__);
 // Shared utilities, persistence, site detection, episode builder,
 // and all UI components used by both TVDB and TMDB sides.
 // ════════════════════════════════════════════════════════════════════════════
-
-// ── Constants ─────────────────────────────────────────────────────────────────
-const MAX_ROWS = 25;
 
 // ── Site detection ────────────────────────────────────────────────────────────
 const isTvdb = location.hostname.includes('thetvdb.com');
@@ -115,6 +113,44 @@ function sleep(ms) {
 }
 function toDateStr(date) {
   return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
+}
+
+/**
+ * Normalize any date value to "YYYY-MM-DD" string.
+ * Handles: Date objects, "2026-04-24", ISO timestamps,
+ * and d/m/yyyy display format used by TMDB's Kendo grid.
+ */
+function normDate(d) {
+  if (!d) return '';
+  if (d instanceof Date) return isNaN(d) ? '' : toDateStr(d);
+  const s = String(d).trim();
+  if (!s) return '';
+  // Already YYYY-MM-DD (or ISO timestamp)
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  // d/m/yyyy or dd/mm/yyyy  (TMDB Kendo display format)
+  const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (dmy) {
+    const [, dd, mm, yyyy] = dmy;
+    return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+  }
+  // Generic fallback
+  const parsed = new Date(s);
+  return isNaN(parsed) ? s : toDateStr(parsed);
+}
+
+/**
+ * Build a subtitle parts array from a list of episodes that have _exists/_diff flags.
+ * Returns e.g. ["5 ตอนใหม่", "20 มีแล้ว", "2 ข้อมูลต่าง"]
+ * Caller joins however it likes, e.g. parts.join(' · ')
+ */
+function episodeStatusParts(episodes) {
+  const newCount = episodes.filter(e => !e._exists).length;
+  const existsCount = episodes.filter(e => e._exists && !e._diff).length;
+  const diffCount = episodes.filter(e => e._diff).length;
+  const parts = [`${newCount} ตอนใหม่`];
+  if (existsCount) parts.push(`${existsCount} มีแล้ว`);
+  if (diffCount) parts.push(`${diffCount} ข้อมูลต่าง`);
+  return parts;
 }
 function gmRequest(opts) {
   return new Promise((resolve, reject) => {
@@ -469,33 +505,6 @@ __webpack_require__.r(__webpack_exports__);
 // ════════════════════════════════════════════════════════════════════════════
 
 
-// ── Normalize any date value to "YYYY-MM-DD" string for comparison ────────────
-// Handles: Date objects, "2026-04-24", "24/4/2026", ISO timestamps, etc.
-function normDate(d) {
-  if (!d) return '';
-  // JavaScript Date object (Kendo sometimes parses date fields internally)
-  if (d instanceof Date) {
-    if (isNaN(d)) return '';
-    return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-');
-  }
-  const s = String(d).trim();
-  if (!s) return '';
-  // Already YYYY-MM-DD (or ISO timestamp starting with that)
-  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-  // d/m/yyyy or dd/mm/yyyy (TMDB display format)
-  const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (dmy) {
-    const [, dd, mm, yyyy] = dmy;
-    return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
-  }
-  // Fallback: generic Date parse
-  const parsed = new Date(s);
-  if (!isNaN(parsed)) {
-    return [parsed.getFullYear(), String(parsed.getMonth() + 1).padStart(2, '0'), String(parsed.getDate()).padStart(2, '0')].join('-');
-  }
-  return s; // give up, return as-is
-}
-
 // ── Internal: get loaded Kendo DataSource (waits for data if empty) ───────────
 async function _getKendoDS() {
   const jq = (typeof unsafeWindow !== 'undefined' ? unsafeWindow.jQuery : null) || window.jQuery;
@@ -714,7 +723,7 @@ async function doFetchFromTvdb() {
       _diff = false;
     if (existing) {
       _exists = true;
-      _diff = airDate && existing.air_date && normDate(airDate) !== normDate(existing.air_date) || runtime && existing.runtime && runtime !== existing.runtime;
+      _diff = airDate && existing.air_date && (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.normDate)(airDate) !== (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.normDate)(existing.air_date) || runtime && existing.runtime && runtime !== existing.runtime;
     }
     return {
       episode_number: epNum,
@@ -726,12 +735,7 @@ async function doFetchFromTvdb() {
       _diff
     };
   });
-  const newCount = mapped.filter(e => !e._exists).length;
-  const existsCount = mapped.filter(e => e._exists && !e._diff).length;
-  const diffCount = mapped.filter(e => e._diff).length;
-  const parts = [`${newCount} ตอนใหม่`];
-  if (existsCount) parts.push(`${existsCount} มีแล้ว`);
-  if (diffCount) parts.push(`${diffCount} ข้อมูลต่าง`);
+  const parts = (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.episodeStatusParts)(mapped);
   (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.setConfigStatus)('', '');
   _core_js__WEBPACK_IMPORTED_MODULE_0__.configOverlay.classList.remove('active');
   (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.showPreview)(mapped, `TVDB API · Series ${seriesId} · Season ${season} · ${parts.join(' · ')}`);
@@ -844,19 +848,14 @@ async function doLoadSaved() {
       _exists: false,
       _diff: false
     };
-    const _diff = ep.air_date && existing.air_date && normDate(ep.air_date) !== normDate(existing.air_date) || ep.runtime && existing.runtime && ep.runtime !== existing.runtime;
+    const _diff = ep.air_date && existing.air_date && (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.normDate)(ep.air_date) !== (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.normDate)(existing.air_date) || ep.runtime && existing.runtime && ep.runtime !== existing.runtime;
     return {
       ...ep,
       _exists: true,
       _diff
     };
   });
-  const newCount = marked.filter(e => !e._exists).length;
-  const existsCount = marked.filter(e => e._exists && !e._diff).length;
-  const diffCount = marked.filter(e => e._diff).length;
-  const parts = [`${newCount} ตอนใหม่`];
-  if (existsCount) parts.push(`${existsCount} มีแล้ว`);
-  if (diffCount) parts.push(`${diffCount} ข้อมูลต่าง`);
+  const parts = (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.episodeStatusParts)(marked);
   (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.setConfigStatus)('', '');
   _core_js__WEBPACK_IMPORTED_MODULE_0__.configOverlay.classList.remove('active');
   (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.showPreview)(marked, `Saved · ${(0,_core_js__WEBPACK_IMPORTED_MODULE_0__.pget)('show_name') || '—'} · Season ${_core_js__WEBPACK_IMPORTED_MODULE_0__.urlSeason} · ${parts.join(' · ')}`);

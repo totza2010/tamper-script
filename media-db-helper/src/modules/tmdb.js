@@ -10,47 +10,13 @@ import {
     urlSeason, tmdbIdFromUrl,
     pget, pset,
     escHtml, gmRequest, sleep,
+    normDate, episodeStatusParts,
     state,
     configPanel, configOverlay, previewPanel, previewOverlay,
     setConfigStatus, setPreviewStatus,
     showPreview, syncFieldsFromDOM, saveEpisodes, getSavedEpisodes,
     buildManualSectionHtml,
 } from './core.js';
-
-// ── Normalize any date value to "YYYY-MM-DD" string for comparison ────────────
-// Handles: Date objects, "2026-04-24", "24/4/2026", ISO timestamps, etc.
-function normDate(d) {
-    if (!d) return '';
-    // JavaScript Date object (Kendo sometimes parses date fields internally)
-    if (d instanceof Date) {
-        if (isNaN(d)) return '';
-        return [
-            d.getFullYear(),
-            String(d.getMonth() + 1).padStart(2, '0'),
-            String(d.getDate()).padStart(2, '0'),
-        ].join('-');
-    }
-    const s = String(d).trim();
-    if (!s) return '';
-    // Already YYYY-MM-DD (or ISO timestamp starting with that)
-    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-    // d/m/yyyy or dd/mm/yyyy (TMDB display format)
-    const dmy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (dmy) {
-        const [, dd, mm, yyyy] = dmy;
-        return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
-    }
-    // Fallback: generic Date parse
-    const parsed = new Date(s);
-    if (!isNaN(parsed)) {
-        return [
-            parsed.getFullYear(),
-            String(parsed.getMonth() + 1).padStart(2, '0'),
-            String(parsed.getDate()).padStart(2, '0'),
-        ].join('-');
-    }
-    return s; // give up, return as-is
-}
 
 // ── Internal: get loaded Kendo DataSource (waits for data if empty) ───────────
 async function _getKendoDS() {
@@ -273,14 +239,7 @@ export async function doFetchFromTvdb() {
         return { episode_number: epNum, name, overview: ep.overview || '', air_date: airDate, runtime, _exists, _diff };
     });
 
-    const newCount    = mapped.filter(e => !e._exists).length;
-    const existsCount = mapped.filter(e =>  e._exists && !e._diff).length;
-    const diffCount   = mapped.filter(e =>  e._diff).length;
-
-    const parts = [`${newCount} ตอนใหม่`];
-    if (existsCount) parts.push(`${existsCount} มีแล้ว`);
-    if (diffCount)   parts.push(`${diffCount} ข้อมูลต่าง`);
-
+    const parts = episodeStatusParts(mapped);
     setConfigStatus('', '');
     configOverlay.classList.remove('active');
     showPreview(mapped, `TVDB API · Series ${seriesId} · Season ${season} · ${parts.join(' · ')}`);
@@ -416,14 +375,7 @@ export async function doLoadSaved() {
         return { ...ep, _exists: true, _diff };
     });
 
-    const newCount    = marked.filter(e => !e._exists).length;
-    const existsCount = marked.filter(e =>  e._exists && !e._diff).length;
-    const diffCount   = marked.filter(e =>  e._diff).length;
-
-    const parts = [`${newCount} ตอนใหม่`];
-    if (existsCount) parts.push(`${existsCount} มีแล้ว`);
-    if (diffCount)   parts.push(`${diffCount} ข้อมูลต่าง`);
-
+    const parts = episodeStatusParts(marked);
     setConfigStatus('', '');
     configOverlay.classList.remove('active');
     showPreview(marked, `Saved · ${pget('show_name') || '—'} · Season ${urlSeason} · ${parts.join(' · ')}`);
