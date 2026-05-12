@@ -302,3 +302,40 @@ $color-green: #01d277;
     color: $color-blue;
     font-weight: bold;
 }
+
+// ── Episode status rows (TMDB side: exists / diff) ────────────────────────────
+.tm-ep-exists {
+    opacity: 0.45;
+
+    td { background: #111120 !important; }
+
+    // Mute input fields visually
+    input, textarea { color: #555 !important; border-color: #333 !important; }
+}
+
+.tm-ep-diff {
+    td { background: #1a1800 !important; }
+}
+
+.tm-ep-badge {
+    display: block;
+    font-size: 9px;
+    font-weight: normal;
+    letter-spacing: 0.02em;
+    border-radius: 3px;
+    padding: 1px 4px;
+    margin-top: 3px;
+    white-space: nowrap;
+}
+
+.tm-ep-badge-exists {
+    background: #1a1a2a;
+    color: #445;
+    border: 1px solid #2a2a3a;
+}
+
+.tm-ep-badge-diff {
+    background: #2a2200;
+    color: #aa8800;
+    border: 1px solid #443300;
+}

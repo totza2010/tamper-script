@@ -323,10 +323,24 @@ export function renderPreviewTable() {
     const tbody = previewPanel.querySelector('#tm-preview-body');
     tbody.innerHTML = '';
     state.previewEpisodes.forEach((ep, idx) => {
+        const exists = !!ep._exists;
+        const diff   = !!ep._diff;
+
+        // Row status class: new / exists / diff
+        const rowClass = diff ? 'tm-ep-diff' : exists ? 'tm-ep-exists' : '';
+
+        // Badge shown in the # column
+        const badge = diff
+            ? '<span class="tm-ep-badge tm-ep-badge-diff">↑ ต่าง</span>'
+            : exists
+                ? '<span class="tm-ep-badge tm-ep-badge-exists">✓ มีแล้ว</span>'
+                : '';
+
         const tr = document.createElement('tr');
         tr.dataset.idx = idx;
+        if (rowClass) tr.classList.add(rowClass);
         tr.innerHTML = `
-            <td class="ep-num-cell">${idx + 1}</td>
+            <td class="ep-num-cell">${idx + 1}${badge}</td>
             <td class="ep-num-cell">
                 <input type="number" class="ep-field" data-field="episode_number"
                     value="${ep.episode_number}" style="width:52px;text-align:center">
@@ -346,6 +360,12 @@ export function renderPreviewTable() {
         tr.querySelectorAll('.ep-field').forEach(inp => {
             inp.addEventListener('input', () => {
                 state.previewEpisodes[idx][inp.dataset.field] = inp.value;
+                // If user edits a field, clear the _exists flag so it won't be skipped
+                if (inp.dataset.field !== 'episode_number') {
+                    state.previewEpisodes[idx]._exists = false;
+                    state.previewEpisodes[idx]._diff   = false;
+                    tr.classList.remove('tm-ep-exists', 'tm-ep-diff');
+                }
             });
         });
         tr.querySelectorAll('.tm-move-btn').forEach(btn => {

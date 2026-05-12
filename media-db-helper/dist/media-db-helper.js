@@ -365,10 +365,19 @@ function renderPreviewTable() {
   const tbody = previewPanel.querySelector('#tm-preview-body');
   tbody.innerHTML = '';
   state.previewEpisodes.forEach((ep, idx) => {
+    const exists = !!ep._exists;
+    const diff = !!ep._diff;
+
+    // Row status class: new / exists / diff
+    const rowClass = diff ? 'tm-ep-diff' : exists ? 'tm-ep-exists' : '';
+
+    // Badge shown in the # column
+    const badge = diff ? '<span class="tm-ep-badge tm-ep-badge-diff">↑ ต่าง</span>' : exists ? '<span class="tm-ep-badge tm-ep-badge-exists">✓ มีแล้ว</span>' : '';
     const tr = document.createElement('tr');
     tr.dataset.idx = idx;
+    if (rowClass) tr.classList.add(rowClass);
     tr.innerHTML = `
-            <td class="ep-num-cell">${idx + 1}</td>
+            <td class="ep-num-cell">${idx + 1}${badge}</td>
             <td class="ep-num-cell">
                 <input type="number" class="ep-field" data-field="episode_number"
                     value="${ep.episode_number}" style="width:52px;text-align:center">
@@ -388,6 +397,12 @@ function renderPreviewTable() {
     tr.querySelectorAll('.ep-field').forEach(inp => {
       inp.addEventListener('input', () => {
         state.previewEpisodes[idx][inp.dataset.field] = inp.value;
+        // If user edits a field, clear the _exists flag so it won't be skipped
+        if (inp.dataset.field !== 'episode_number') {
+          state.previewEpisodes[idx]._exists = false;
+          state.previewEpisodes[idx]._diff = false;
+          tr.classList.remove('tm-ep-exists', 'tm-ep-diff');
+        }
       });
     });
     tr.querySelectorAll('.tm-move-btn').forEach(btn => {
@@ -441,6 +456,7 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   doAddToTmdb: () => (/* binding */ doAddToTmdb),
 /* harmony export */   doFetchFromTvdb: () => (/* binding */ doFetchFromTvdb),
 /* harmony export */   doLoadSaved: () => (/* binding */ doLoadSaved),
+/* harmony export */   getTmdbExistingMap: () => (/* binding */ getTmdbExistingMap),
 /* harmony export */   getTmdbNextEpisode: () => (/* binding */ getTmdbNextEpisode)
 /* harmony export */ });
 /* harmony import */ var _core_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./core.js */ "./src/modules/core.js");
@@ -453,33 +469,53 @@ __webpack_require__.r(__webpack_exports__);
 // ════════════════════════════════════════════════════════════════════════════
 
 
-// ── Read max existing episode via Kendo DataSource, return next ep number ─────
-async function getTmdbNextEpisode() {
-  try {
-    const jq = (typeof unsafeWindow !== 'undefined' ? unsafeWindow.jQuery : null) || window.jQuery;
-    if (!jq) return 1;
-    const grid = jq('#grid').data('kendoGrid');
-    if (!grid) return 1;
-    const ds = grid.dataSource;
-    if (!ds.data().length) {
-      await new Promise(resolve => {
-        ds.one('change', resolve);
-        ds.one('error', resolve);
-        setTimeout(resolve, 5000);
-        ds.read();
-      });
-    }
-    const items = ds.data();
-    if (!items.length) return 1;
-    let maxEp = 0;
-    for (let i = 0; i < items.length; i++) {
-      const n = parseInt(items[i].episode_number, 10);
-      if (!isNaN(n) && n > maxEp) maxEp = n;
-    }
-    return maxEp + 1;
-  } catch {
-    return 1;
+// ── Internal: get loaded Kendo DataSource (waits for data if empty) ───────────
+async function _getKendoDS() {
+  const jq = (typeof unsafeWindow !== 'undefined' ? unsafeWindow.jQuery : null) || window.jQuery;
+  if (!jq) return null;
+  const grid = jq('#grid').data('kendoGrid');
+  if (!grid) return null;
+  const ds = grid.dataSource;
+  if (!ds.data().length) {
+    await new Promise(resolve => {
+      ds.one('change', resolve);
+      ds.one('error', resolve);
+      setTimeout(resolve, 5000);
+      ds.read();
+    });
   }
+  return ds;
+}
+
+// ── Returns a Map<episodeNumber, {name, air_date, runtime}> from the grid ─────
+async function getTmdbExistingMap() {
+  try {
+    const ds = await _getKendoDS();
+    if (!ds) return new Map();
+    const map = new Map();
+    const items = ds.data();
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const n = parseInt(item.episode_number, 10);
+      if (!isNaN(n)) {
+        map.set(n, {
+          name: item.name || '',
+          air_date: item.air_date || '',
+          runtime: item.runtime != null ? String(item.runtime) : ''
+        });
+      }
+    }
+    return map;
+  } catch {
+    return new Map();
+  }
+}
+
+// ── Returns max existing episode + 1 (used by doManual to auto-detect start) ──
+async function getTmdbNextEpisode() {
+  const map = await getTmdbExistingMap();
+  if (!map.size) return 1;
+  return Math.max(...map.keys()) + 1;
 }
 
 // ── TMDB-side config panel HTML ───────────────────────────────────────────────
@@ -634,16 +670,44 @@ async function doFetchFromTvdb() {
     (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.setConfigStatus)(`ไม่พบตอนใน Season ${season} (TVDB Series ${seriesId})`, 'err');
     return;
   }
-  const mapped = seasonEps.map(ep => ({
-    episode_number: ep.number,
-    name: ep.name || '',
-    overview: ep.overview || '',
-    air_date: ep.aired || '',
-    runtime: ep.runtime != null ? String(ep.runtime) : ''
-  }));
+
+  // Step 3: Check what's already in TMDB to mark duplicates in preview
+  (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.setConfigStatus)('กำลังตรวจสอบตอนที่มีอยู่ใน TMDB…', 'warn');
+  const existingMap = await getTmdbExistingMap();
+  const mapped = seasonEps.map(ep => {
+    const epNum = ep.number;
+    const name = ep.name || '';
+    const airDate = ep.aired || '';
+    const runtime = ep.runtime != null ? String(ep.runtime) : '';
+    const existing = existingMap.get(epNum);
+
+    // _exists: episode number already in TMDB
+    // _diff:   exists but has different data from TVDB (potential update)
+    let _exists = false,
+      _diff = false;
+    if (existing) {
+      _exists = true;
+      _diff = airDate && existing.air_date && airDate !== existing.air_date || runtime && existing.runtime && runtime !== existing.runtime;
+    }
+    return {
+      episode_number: epNum,
+      name,
+      overview: ep.overview || '',
+      air_date: airDate,
+      runtime,
+      _exists,
+      _diff
+    };
+  });
+  const newCount = mapped.filter(e => !e._exists).length;
+  const existsCount = mapped.filter(e => e._exists && !e._diff).length;
+  const diffCount = mapped.filter(e => e._diff).length;
+  const parts = [`${newCount} ตอนใหม่`];
+  if (existsCount) parts.push(`${existsCount} มีแล้ว`);
+  if (diffCount) parts.push(`${diffCount} ข้อมูลต่าง`);
   (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.setConfigStatus)('', '');
   _core_js__WEBPACK_IMPORTED_MODULE_0__.configOverlay.classList.remove('active');
-  (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.showPreview)(mapped, `TVDB API · Series ${seriesId} · Season ${season} · ${mapped.length} ตอน`);
+  (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.showPreview)(mapped, `TVDB API · Series ${seriesId} · Season ${season} · ${parts.join(' · ')}`);
 }
 
 // ── Add episodes to TMDB via the page's own Kendo DataSource ─────────────────
@@ -667,24 +731,31 @@ async function doAddToTmdb() {
     return;
   }
   const ds = grid.dataSource;
-  (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.setPreviewStatus)('กำลังตรวจสอบตอนที่มีอยู่แล้ว…', 'warn');
-  if (!ds.data().length) {
-    await new Promise(resolve => {
-      ds.one('change', resolve);
-      ds.one('error', resolve);
-      setTimeout(resolve, 8000);
-      ds.read();
-    });
-  }
 
-  // Build a set of already-existing episode numbers
-  const existingNums = new Set();
-  const items = ds.data();
-  for (let i = 0; i < items.length; i++) {
-    existingNums.add(parseInt(items[i].episode_number, 10));
+  // Use _exists flags set during preview (already checked against live grid).
+  // Episodes marked _exists=true are skipped; _diff episodes are skipped for now
+  // (user can edit them manually or clear the flag by editing the field).
+  const hasPreviewFlags = _core_js__WEBPACK_IMPORTED_MODULE_0__.state.previewEpisodes.some(ep => ep._exists !== undefined);
+  let toAdd, skipped;
+  if (hasPreviewFlags) {
+    // Fast path: use pre-computed flags from doFetchFromTvdb / doLoadSaved
+    toAdd = _core_js__WEBPACK_IMPORTED_MODULE_0__.state.previewEpisodes.filter(ep => !ep._exists);
+    skipped = _core_js__WEBPACK_IMPORTED_MODULE_0__.state.previewEpisodes.length - toAdd.length;
+  } else {
+    // Fallback: re-read DataSource (doManual path, no pre-flags)
+    (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.setPreviewStatus)('กำลังตรวจสอบตอนที่มีอยู่แล้ว…', 'warn');
+    if (!ds.data().length) {
+      await new Promise(resolve => {
+        ds.one('change', resolve);
+        ds.one('error', resolve);
+        setTimeout(resolve, 8000);
+        ds.read();
+      });
+    }
+    const existingNums = new Set(Array.from(ds.data()).map(item => parseInt(item.episode_number, 10)));
+    toAdd = _core_js__WEBPACK_IMPORTED_MODULE_0__.state.previewEpisodes.filter(ep => !existingNums.has(parseInt(ep.episode_number, 10)));
+    skipped = _core_js__WEBPACK_IMPORTED_MODULE_0__.state.previewEpisodes.length - toAdd.length;
   }
-  const toAdd = _core_js__WEBPACK_IMPORTED_MODULE_0__.state.previewEpisodes.filter(ep => !existingNums.has(parseInt(ep.episode_number, 10)));
-  const skipped = _core_js__WEBPACK_IMPORTED_MODULE_0__.state.previewEpisodes.length - toAdd.length;
   if (!toAdd.length) {
     (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.setPreviewStatus)(`ทุกตอนมีอยู่ใน TMDB แล้ว (${skipped} ตอน) — ไม่มีอะไรเพิ่ม`, 'ok');
     confirmBtn.disabled = backBtn.disabled = false;
@@ -731,15 +802,37 @@ async function doAddToTmdb() {
 }
 
 // ── Load previously saved episodes (created on TVDB side) ────────────────────
-function doLoadSaved() {
+async function doLoadSaved() {
   const saved = (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.getSavedEpisodes)();
   if (!saved || !saved.length) {
     (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.setConfigStatus)('ยังไม่มีตอนที่บันทึกไว้ กรุณาสร้างตอนใน TVDB ก่อน', 'err');
     return;
   }
+  (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.setConfigStatus)('กำลังตรวจสอบตอนที่มีอยู่ใน TMDB…', 'warn');
+  const existingMap = await getTmdbExistingMap();
+  const marked = saved.map(ep => {
+    const existing = existingMap.get(parseInt(ep.episode_number, 10));
+    if (!existing) return {
+      ...ep,
+      _exists: false,
+      _diff: false
+    };
+    const _diff = ep.air_date && existing.air_date && ep.air_date !== existing.air_date || ep.runtime && existing.runtime && ep.runtime !== existing.runtime;
+    return {
+      ...ep,
+      _exists: true,
+      _diff
+    };
+  });
+  const newCount = marked.filter(e => !e._exists).length;
+  const existsCount = marked.filter(e => e._exists && !e._diff).length;
+  const diffCount = marked.filter(e => e._diff).length;
+  const parts = [`${newCount} ตอนใหม่`];
+  if (existsCount) parts.push(`${existsCount} มีแล้ว`);
+  if (diffCount) parts.push(`${diffCount} ข้อมูลต่าง`);
   (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.setConfigStatus)('', '');
   _core_js__WEBPACK_IMPORTED_MODULE_0__.configOverlay.classList.remove('active');
-  (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.showPreview)(saved, `Saved · ${(0,_core_js__WEBPACK_IMPORTED_MODULE_0__.pget)('show_name') || '—'} · Season ${_core_js__WEBPACK_IMPORTED_MODULE_0__.urlSeason}`);
+  (0,_core_js__WEBPACK_IMPORTED_MODULE_0__.showPreview)(marked, `Saved · ${(0,_core_js__WEBPACK_IMPORTED_MODULE_0__.pget)('show_name') || '—'} · Season ${_core_js__WEBPACK_IMPORTED_MODULE_0__.urlSeason} · ${parts.join(' · ')}`);
 }
 
 /***/ },
@@ -1255,6 +1348,44 @@ ___CSS_LOADER_EXPORT___.push([module.id, `.tm-overlay {
   text-align: center;
   color: #01b4e4;
   font-weight: bold;
+}
+
+.tm-ep-exists {
+  opacity: 0.45;
+}
+.tm-ep-exists td {
+  background: #111120 !important;
+}
+.tm-ep-exists input, .tm-ep-exists textarea {
+  color: #555 !important;
+  border-color: #333 !important;
+}
+
+.tm-ep-diff td {
+  background: #1a1800 !important;
+}
+
+.tm-ep-badge {
+  display: block;
+  font-size: 9px;
+  font-weight: normal;
+  letter-spacing: 0.02em;
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin-top: 3px;
+  white-space: nowrap;
+}
+
+.tm-ep-badge-exists {
+  background: #1a1a2a;
+  color: #445;
+  border: 1px solid #2a2a3a;
+}
+
+.tm-ep-badge-diff {
+  background: #2a2200;
+  color: #aa8800;
+  border: 1px solid #443300;
 }`, ""]);
 // Exports
 /* harmony default export */ const __WEBPACK_DEFAULT_EXPORT__ = (___CSS_LOADER_EXPORT___);

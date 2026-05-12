@@ -18,36 +18,52 @@ import {
     buildManualSectionHtml,
 } from './core.js';
 
-// ── Read max existing episode via Kendo DataSource, return next ep number ─────
-export async function getTmdbNextEpisode() {
+// ── Internal: get loaded Kendo DataSource (waits for data if empty) ───────────
+async function _getKendoDS() {
+    const jq = (typeof unsafeWindow !== 'undefined' ? unsafeWindow.jQuery : null)
+            || window.jQuery;
+    if (!jq) return null;
+    const grid = jq('#grid').data('kendoGrid');
+    if (!grid) return null;
+    const ds = grid.dataSource;
+    if (!ds.data().length) {
+        await new Promise(resolve => {
+            ds.one('change', resolve);
+            ds.one('error',  resolve);
+            setTimeout(resolve, 5000);
+            ds.read();
+        });
+    }
+    return ds;
+}
+
+// ── Returns a Map<episodeNumber, {name, air_date, runtime}> from the grid ─────
+export async function getTmdbExistingMap() {
     try {
-        const jq = (typeof unsafeWindow !== 'undefined' ? unsafeWindow.jQuery : null)
-                || window.jQuery;
-        if (!jq) return 1;
-
-        const grid = jq('#grid').data('kendoGrid');
-        if (!grid) return 1;
-
-        const ds = grid.dataSource;
-        if (!ds.data().length) {
-            await new Promise(resolve => {
-                ds.one('change', resolve);
-                ds.one('error',  resolve);
-                setTimeout(resolve, 5000);
-                ds.read();
-            });
-        }
-
+        const ds = await _getKendoDS();
+        if (!ds) return new Map();
+        const map = new Map();
         const items = ds.data();
-        if (!items.length) return 1;
-
-        let maxEp = 0;
         for (let i = 0; i < items.length; i++) {
-            const n = parseInt(items[i].episode_number, 10);
-            if (!isNaN(n) && n > maxEp) maxEp = n;
+            const item = items[i];
+            const n = parseInt(item.episode_number, 10);
+            if (!isNaN(n)) {
+                map.set(n, {
+                    name:    item.name     || '',
+                    air_date:item.air_date  || '',
+                    runtime: item.runtime  != null ? String(item.runtime) : '',
+                });
+            }
         }
-        return maxEp + 1;
-    } catch { return 1; }
+        return map;
+    } catch { return new Map(); }
+}
+
+// ── Returns max existing episode + 1 (used by doManual to auto-detect start) ──
+export async function getTmdbNextEpisode() {
+    const map = await getTmdbExistingMap();
+    if (!map.size) return 1;
+    return Math.max(...map.keys()) + 1;
 }
 
 // ── TMDB-side config panel HTML ───────────────────────────────────────────────
@@ -200,20 +216,40 @@ export async function doFetchFromTvdb() {
         return;
     }
 
-    const mapped = seasonEps.map(ep => ({
-        episode_number: ep.number,
-        name:     ep.name     || '',
-        overview: ep.overview || '',
-        air_date: ep.aired    || '',
-        runtime:  ep.runtime  != null ? String(ep.runtime) : '',
-    }));
+    // Step 3: Check what's already in TMDB to mark duplicates in preview
+    setConfigStatus('กำลังตรวจสอบตอนที่มีอยู่ใน TMDB…', 'warn');
+    const existingMap = await getTmdbExistingMap();
+
+    const mapped = seasonEps.map(ep => {
+        const epNum   = ep.number;
+        const name    = ep.name     || '';
+        const airDate = ep.aired    || '';
+        const runtime = ep.runtime  != null ? String(ep.runtime) : '';
+        const existing = existingMap.get(epNum);
+
+        // _exists: episode number already in TMDB
+        // _diff:   exists but has different data from TVDB (potential update)
+        let _exists = false, _diff = false;
+        if (existing) {
+            _exists = true;
+            _diff = (airDate && existing.air_date && airDate !== existing.air_date)
+                 || (runtime && existing.runtime  && runtime !== existing.runtime);
+        }
+
+        return { episode_number: epNum, name, overview: ep.overview || '', air_date: airDate, runtime, _exists, _diff };
+    });
+
+    const newCount    = mapped.filter(e => !e._exists).length;
+    const existsCount = mapped.filter(e =>  e._exists && !e._diff).length;
+    const diffCount   = mapped.filter(e =>  e._diff).length;
+
+    const parts = [`${newCount} ตอนใหม่`];
+    if (existsCount) parts.push(`${existsCount} มีแล้ว`);
+    if (diffCount)   parts.push(`${diffCount} ข้อมูลต่าง`);
 
     setConfigStatus('', '');
     configOverlay.classList.remove('active');
-    showPreview(
-        mapped,
-        `TVDB API · Series ${seriesId} · Season ${season} · ${mapped.length} ตอน`
-    );
+    showPreview(mapped, `TVDB API · Series ${seriesId} · Season ${season} · ${parts.join(' · ')}`);
 }
 
 // ── Add episodes to TMDB via the page's own Kendo DataSource ─────────────────
@@ -242,26 +278,34 @@ export async function doAddToTmdb() {
     }
 
     const ds = grid.dataSource;
-    setPreviewStatus('กำลังตรวจสอบตอนที่มีอยู่แล้ว…', 'warn');
 
-    if (!ds.data().length) {
-        await new Promise(resolve => {
-            ds.one('change', resolve);
-            ds.one('error',  resolve);
-            setTimeout(resolve, 8000);
-            ds.read();
-        });
+    // Use _exists flags set during preview (already checked against live grid).
+    // Episodes marked _exists=true are skipped; _diff episodes are skipped for now
+    // (user can edit them manually or clear the flag by editing the field).
+    const hasPreviewFlags = state.previewEpisodes.some(ep => ep._exists !== undefined);
+
+    let toAdd, skipped;
+    if (hasPreviewFlags) {
+        // Fast path: use pre-computed flags from doFetchFromTvdb / doLoadSaved
+        toAdd   = state.previewEpisodes.filter(ep => !ep._exists);
+        skipped = state.previewEpisodes.length - toAdd.length;
+    } else {
+        // Fallback: re-read DataSource (doManual path, no pre-flags)
+        setPreviewStatus('กำลังตรวจสอบตอนที่มีอยู่แล้ว…', 'warn');
+        if (!ds.data().length) {
+            await new Promise(resolve => {
+                ds.one('change', resolve);
+                ds.one('error',  resolve);
+                setTimeout(resolve, 8000);
+                ds.read();
+            });
+        }
+        const existingNums = new Set(
+            Array.from(ds.data()).map(item => parseInt(item.episode_number, 10))
+        );
+        toAdd   = state.previewEpisodes.filter(ep => !existingNums.has(parseInt(ep.episode_number, 10)));
+        skipped = state.previewEpisodes.length - toAdd.length;
     }
-
-    // Build a set of already-existing episode numbers
-    const existingNums = new Set();
-    const items = ds.data();
-    for (let i = 0; i < items.length; i++) {
-        existingNums.add(parseInt(items[i].episode_number, 10));
-    }
-
-    const toAdd   = state.previewEpisodes.filter(ep => !existingNums.has(parseInt(ep.episode_number, 10)));
-    const skipped = state.previewEpisodes.length - toAdd.length;
 
     if (!toAdd.length) {
         setPreviewStatus(`ทุกตอนมีอยู่ใน TMDB แล้ว (${skipped} ตอน) — ไม่มีอะไรเพิ่ม`, 'ok');
@@ -320,13 +364,33 @@ export async function doAddToTmdb() {
 }
 
 // ── Load previously saved episodes (created on TVDB side) ────────────────────
-export function doLoadSaved() {
+export async function doLoadSaved() {
     const saved = getSavedEpisodes();
     if (!saved || !saved.length) {
         setConfigStatus('ยังไม่มีตอนที่บันทึกไว้ กรุณาสร้างตอนใน TVDB ก่อน', 'err');
         return;
     }
+
+    setConfigStatus('กำลังตรวจสอบตอนที่มีอยู่ใน TMDB…', 'warn');
+    const existingMap = await getTmdbExistingMap();
+
+    const marked = saved.map(ep => {
+        const existing = existingMap.get(parseInt(ep.episode_number, 10));
+        if (!existing) return { ...ep, _exists: false, _diff: false };
+        const _diff = (ep.air_date && existing.air_date && ep.air_date !== existing.air_date)
+                   || (ep.runtime  && existing.runtime  && ep.runtime  !== existing.runtime);
+        return { ...ep, _exists: true, _diff };
+    });
+
+    const newCount    = marked.filter(e => !e._exists).length;
+    const existsCount = marked.filter(e =>  e._exists && !e._diff).length;
+    const diffCount   = marked.filter(e =>  e._diff).length;
+
+    const parts = [`${newCount} ตอนใหม่`];
+    if (existsCount) parts.push(`${existsCount} มีแล้ว`);
+    if (diffCount)   parts.push(`${diffCount} ข้อมูลต่าง`);
+
     setConfigStatus('', '');
     configOverlay.classList.remove('active');
-    showPreview(saved, `Saved · ${pget('show_name') || '—'} · Season ${urlSeason}`);
+    showPreview(marked, `Saved · ${pget('show_name') || '—'} · Season ${urlSeason} · ${parts.join(' · ')}`);
 }
