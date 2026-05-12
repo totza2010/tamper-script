@@ -9,7 +9,8 @@
       "Bash(npm run *)",
       "PowerShell(\\(Get-Item \"C:\\\\Users\\\\T14_think\\\\tmdb-to-tvdb\\\\sonarr-naming.dist.user.js\"\\).Length; Get-Content \"C:\\\\Users\\\\T14_think\\\\tmdb-to-tvdb\\\\sonarr-naming.dist.user.js\" -TotalCount 20)",
       "Bash(dir \"C:\\\\Users\\\\T14_think\\\\tmdb-to-tvdb\\\\sonarr-naming\\\\src\\\\scss\" /b)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(dir /s /b \"C:\\\\Users\\\\T14_think\\\\tmdb-to-tvdb\\\\sonarr-naming\")"
     ]
   }
 }

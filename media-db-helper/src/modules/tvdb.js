@@ -1,0 +1,193 @@
+'use strict';
+
+// ════════════════════════════════════════════════════════════════════════════
+// PART 4 — TVDB
+// TVDB-specific: form scraping, TMDB API fetch → TVDB form fill,
+// and TVDB-side config panel HTML.
+// ════════════════════════════════════════════════════════════════════════════
+
+import {
+    MAX_ROWS,
+    urlSeason,
+    pget, pset,
+    escHtml, gmRequest,
+    state,
+    configPanel, configOverlay, previewOverlay,
+    setConfigStatus, setPreviewStatus,
+    showPreview, syncFieldsFromDOM, saveEpisodes,
+    buildManualSectionHtml,
+} from './core.js';
+
+// ── Read the starting episode number directly from the TVDB bulk-add form ─────
+export function getFormStartEpisode() {
+    const el = document.querySelector('fieldset.noformat input[name="number[]"]');
+    if (!el) return 1;
+    const v = parseInt(el.value, 10);
+    return isNaN(v) ? 1 : v;
+}
+
+// ── TVDB-side config panel HTML ───────────────────────────────────────────────
+export function buildTvdbPanelHtml() {
+    return `
+        <h3 style="margin:0 0 14px;color:#01b4e4;font-size:17px">Fetch Episodes (TVDB)</h3>
+        <div class="tm-tabs">
+            <div class="tm-tab active" data-mode="tmdb">จาก TMDB API</div>
+            <div class="tm-tab" data-mode="manual">Manual (ไม่มีใน TMDB)</div>
+        </div>
+
+        <!-- จาก TMDB API -->
+        <div id="tm-tmdb-section">
+            <div class="tm-field">
+                <label class="tm-label">TMDB API Key (v3)</label>
+                <input id="tm-key" type="password"
+                    placeholder="Paste your TMDB v3 API key"
+                    value="${escHtml(pget('tmdb_apikey'))}">
+            </div>
+            <div class="tm-field">
+                <label class="tm-label">TMDB Show ID</label>
+                <input id="tm-show" type="text"
+                    placeholder="e.g. 17454"
+                    value="${escHtml(pget('tmdb_id'))}">
+            </div>
+            <div class="tm-field">
+                <label class="tm-label">Season Number</label>
+                <input id="tm-season" type="number" value="${urlSeason}" min="1">
+            </div>
+            <div class="tm-field">
+                <label class="tm-label">Language</label>
+                <input id="tm-lang" type="text" value="en-US" placeholder="en-US / th-TH">
+            </div>
+        </div>
+
+        <!-- Manual -->
+        <div id="tm-manual-section" style="display:none">
+            ${buildManualSectionHtml()}
+        </div>
+
+        <div id="tm-config-status" class="tm-status"></div>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">
+            <button id="tm-cancel" class="tm-btn tm-btn-secondary">Cancel</button>
+            <button id="tm-go" class="tm-btn tm-btn-primary">Fetch Episodes</button>
+        </div>
+    `;
+}
+
+// ── Fetch from TMDB API v3 → fill TVDB bulk-add form ─────────────────────────
+export async function doFetchFromTmdb() {
+    const apiKey = configPanel.querySelector('#tm-key').value.trim();
+    const showId = configPanel.querySelector('#tm-show').value.trim();
+    const season = configPanel.querySelector('#tm-season').value.trim();
+    const lang   = configPanel.querySelector('#tm-lang').value.trim() || 'en-US';
+
+    if (!apiKey || !showId || !season) {
+        setConfigStatus('กรุณากรอก API Key, Show ID, และ Season', 'err');
+        return;
+    }
+
+    pset('tmdb_apikey', apiKey);
+    pset('tmdb_id', showId);
+    setConfigStatus('Fetching from TMDB…', 'warn');
+
+    let res;
+    try {
+        res = await gmRequest({
+            method: 'GET',
+            url: `https://api.themoviedb.org/3/tv/${encodeURIComponent(showId)}/season/${encodeURIComponent(season)}?api_key=${encodeURIComponent(apiKey)}&language=${encodeURIComponent(lang)}`,
+        });
+    } catch {
+        setConfigStatus('Network error.', 'err');
+        return;
+    }
+
+    if (res.status !== 200) {
+        setConfigStatus(`TMDB error: HTTP ${res.status}`, 'err');
+        return;
+    }
+
+    let data;
+    try { data = JSON.parse(res.responseText); }
+    catch { setConfigStatus('Failed to parse TMDB response.', 'err'); return; }
+
+    const all = data.episodes;
+    if (!all?.length) {
+        setConfigStatus('No episodes returned. Check Show ID and season.', 'err');
+        return;
+    }
+
+    // Start from the episode the TVDB form is already at
+    const startEp  = getFormStartEpisode();
+    const startIdx = all.findIndex(e => e.episode_number >= startEp);
+    if (startIdx === -1) {
+        setConfigStatus(`No episode ≥ ${startEp} found.`, 'err');
+        return;
+    }
+
+    const mapped = all.slice(startIdx, startIdx + MAX_ROWS).map(ep => ({
+        episode_number: ep.episode_number,
+        name:     ep.name     || '',
+        overview: ep.overview || '',
+        air_date: ep.air_date || '',
+        runtime:  ep.runtime  != null ? String(ep.runtime) : '',
+    }));
+
+    setConfigStatus('', '');
+    configOverlay.classList.remove('active');
+    showPreview(
+        mapped,
+        `TMDB · Show ${showId} · Season ${season} · ${mapped.length}/${all.length} ตอน`
+    );
+}
+
+// ── Fill TVDB bulk-add form with previewEpisodes ──────────────────────────────
+export function doFillTvdb() {
+    syncFieldsFromDOM();
+
+    const fieldset = document.querySelector('fieldset.noformat');
+    if (!fieldset) {
+        setPreviewStatus('Could not find the TVDB bulk-add form.', 'err');
+        return;
+    }
+
+    const addBtn = fieldset.querySelector('button.multirow-add');
+    let rows     = _getRows(fieldset);
+    const needed = Math.min(state.previewEpisodes.length, MAX_ROWS);
+
+    let attempts = 0;
+    while (rows.length < needed && addBtn && attempts++ < 30) {
+        addBtn.click();
+        rows = _getRows(fieldset);
+    }
+
+    state.previewEpisodes.forEach((ep, i) => {
+        if (i >= rows.length || i >= MAX_ROWS) return;
+        const row = rows[i];
+        _setVal(row, 'input[name="number[]"]',     ep.episode_number);
+        _setVal(row, 'input[name="name[]"]',        ep.name);
+        _setVal(row, 'textarea[name="overview[]"]', ep.overview);
+        _setVal(row, 'input[name="date[]"]',         ep.air_date);
+        _setVal(row, 'input[name="runtime[]"]',      ep.runtime);
+    });
+
+    saveEpisodes(state.previewEpisodes);
+    setPreviewStatus(
+        `เติมข้อมูล TVDB สำเร็จ ${needed} ตอน · บันทึกสำหรับใช้ใน TMDB ด้วย`,
+        'ok'
+    );
+    setTimeout(() => {
+        previewOverlay.classList.remove('active');
+        setPreviewStatus('', '');
+    }, 2200);
+}
+
+// ── TVDB form helpers ─────────────────────────────────────────────────────────
+function _getRows(fieldset) {
+    return Array.from(fieldset.querySelectorAll('.multirow-item'));
+}
+
+function _setVal(row, selector, value) {
+    const el = row.querySelector(selector);
+    if (!el) return;
+    el.value = value ?? '';
+    el.dispatchEvent(new Event('input',  { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+}

@@ -1,0 +1,304 @@
+// ── Variables ─────────────────────────────────────────────────────────────────
+$bg-panel:    #1a1a2e;
+$bg-input:    #2a2a3e;
+$bg-row:      #252540;
+$bg-deep:     #161626;
+$border:      #2a2a45;
+$border-input:#555;
+$color-text:  #e0e0e0;
+$color-muted: #9ab;
+$color-dim:   #567;
+$color-blue:  #01b4e4;
+$color-green: #01d277;
+
+// ── Overlay / Panel ───────────────────────────────────────────────────────────
+.tm-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    z-index: 10000;
+    justify-content: center;
+    align-items: center;
+
+    &.active { display: flex; }
+}
+
+.tm-panel {
+    background: $bg-panel;
+    color: $color-text;
+    border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+    font-family: sans-serif;
+    overflow: hidden;
+
+    input,
+    textarea,
+    select {
+        width: 100%;
+        padding: 7px 9px;
+        box-sizing: border-box;
+        background: $bg-input;
+        border: 1px solid $border-input;
+        color: #eee;
+        border-radius: 4px;
+        font-size: 13px;
+
+        &:focus {
+            border-color: $color-blue;
+            outline: none;
+        }
+    }
+}
+
+// ── Form helpers ──────────────────────────────────────────────────────────────
+.tm-label {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 12px;
+    color: $color-muted;
+}
+
+.tm-hint-inline {
+    color: $color-dim;
+    font-size: 10px;
+    font-weight: normal;
+}
+
+.tm-field { margin-bottom: 12px; }
+
+.tm-hint {
+    margin: 4px 0 0;
+    font-size: 11px;
+    color: $color-dim;
+}
+
+// ── Buttons ───────────────────────────────────────────────────────────────────
+.tm-btn {
+    padding: 8px 18px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: bold;
+    transition: opacity 0.15s;
+
+    &:disabled {
+        opacity: 0.45;
+        cursor: default;
+    }
+}
+
+.tm-btn-primary {
+    background: $color-blue;
+    color: #fff;
+    &:not(:disabled):hover { background: #02c8ff; }
+}
+
+.tm-btn-secondary {
+    background: #3a3a55;
+    color: #ccc;
+    &:not(:disabled):hover { background: #4a4a6a; }
+}
+
+.tm-btn-success {
+    background: #1a8a3a;
+    color: #fff;
+    &:not(:disabled):hover { background: #22aa48; }
+}
+
+.tm-btn-tmdb {
+    background: #032541;
+    color: $color-green;
+    border: 1px solid $color-green;
+    &:not(:disabled):hover { background: rgba($color-green, 0.13); }
+}
+
+// ── Status bar ────────────────────────────────────────────────────────────────
+.tm-status {
+    display: none;
+    padding: 8px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    margin-bottom: 12px;
+}
+
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+.tm-tabs {
+    display: flex;
+    margin-bottom: 16px;
+    border-bottom: 2px solid #2a2a45;
+}
+
+.tm-tab {
+    padding: 8px 16px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: bold;
+    color: #778;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    user-select: none;
+
+    &:hover { color: #aac; }
+    &.active { color: $color-blue; border-bottom-color: $color-blue; }
+}
+
+// ── Misc ──────────────────────────────────────────────────────────────────────
+.tm-divider {
+    border: none;
+    border-top: 1px solid $border;
+    margin: 14px 0;
+}
+
+.tm-section-title {
+    font-size: 11px;
+    color: $color-dim;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin: 0 0 10px;
+}
+
+// ── Air-day checkboxes ────────────────────────────────────────────────────────
+.tm-days {
+    display: flex;
+    gap: 5px;
+    flex-wrap: wrap;
+    margin-top: 4px;
+}
+
+.tm-day-label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: $bg-input;
+    border: 1px solid #444;
+    border-radius: 4px;
+    padding: 4px 9px;
+    font-size: 12px;
+    cursor: pointer;
+
+    &:has(input:checked) {
+        border-color: $color-blue;
+        background: #1a2a3e;
+        color: $color-blue;
+    }
+
+    input { width: auto; margin: 0; }
+}
+
+// ── Cross-link panel ──────────────────────────────────────────────────────────
+.tm-crosslink-box {
+    background: $bg-deep;
+    border: 1px solid $border;
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin-top: 4px;
+}
+
+.tm-crosslink-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+
+    &:last-child { margin-bottom: 0; }
+
+    .tm-label {
+        margin: 0;
+        width: 110px;
+        flex-shrink: 0;
+        font-size: 11px;
+    }
+
+    input {
+        flex: 1;
+        font-size: 12px;
+        padding: 5px 7px;
+    }
+}
+
+.tm-copy-btn {
+    padding: 4px 8px;
+    font-size: 11px;
+    border: 1px solid #444;
+    border-radius: 3px;
+    background: $bg-input;
+    color: $color-muted;
+    cursor: pointer;
+    white-space: nowrap;
+
+    &:hover { background: #3a3a55; }
+}
+
+.tm-link-btn {
+    display: inline-block;
+    font-size: 11px;
+    color: $color-blue;
+    text-decoration: none;
+    padding: 3px 0;
+    white-space: nowrap;
+
+    &:hover { text-decoration: underline; }
+}
+
+// ── Preview table ─────────────────────────────────────────────────────────────
+.tm-preview-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+
+    th {
+        background: $bg-row;
+        color: $color-muted;
+        font-weight: 600;
+        padding: 7px 8px;
+        text-align: left;
+        position: sticky;
+        top: 0;
+    }
+
+    td {
+        padding: 5px 8px;
+        border-bottom: 1px solid $border;
+        vertical-align: middle;
+    }
+
+    tr:hover td { background: #22223a; }
+
+    input,
+    textarea {
+        background: $bg-input;
+        border: 1px solid #444;
+        color: #eee;
+        border-radius: 3px;
+        padding: 3px 5px;
+        font-size: 12px;
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    textarea {
+        resize: vertical;
+        min-height: 44px;
+    }
+}
+
+.tm-move-btn {
+    background: #3a3a55;
+    color: #aaa;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    padding: 2px 6px;
+    font-size: 13px;
+
+    &:hover { background: #5a5a7a; color: #fff; }
+    &:disabled { opacity: 0.3; cursor: default; }
+}
+
+.ep-num-cell {
+    text-align: center;
+    color: $color-blue;
+    font-weight: bold;
+}
