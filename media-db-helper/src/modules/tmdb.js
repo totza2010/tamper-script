@@ -18,6 +18,27 @@ import {
     buildManualSectionHtml,
 } from './core.js';
 
+// ── ISO 639-3 → human-readable name (for TVDB language list) ─────────────────
+const ISO639_3 = {
+    eng: 'English',           tha: 'Thai / ภาษาไทย',     jpn: 'Japanese / 日本語',
+    zho: 'Chinese / 中文',    kor: 'Korean / 한국어',      fra: 'French',
+    deu: 'German',            spa: 'Spanish',              por: 'Portuguese',
+    ita: 'Italian',           rus: 'Russian',              ara: 'Arabic',
+    hin: 'Hindi',             ind: 'Indonesian',           msa: 'Malay',
+    vie: 'Vietnamese',        nld: 'Dutch',                swe: 'Swedish',
+    nor: 'Norwegian',         dan: 'Danish',               fin: 'Finnish',
+    pol: 'Polish',            ces: 'Czech',                hun: 'Hungarian',
+    ron: 'Romanian',          tur: 'Turkish',              heb: 'Hebrew',
+    fas: 'Persian',           ukr: 'Ukrainian',            cat: 'Catalan',
+    ces: 'Czech',             hrv: 'Croatian',             slk: 'Slovak',
+    bul: 'Bulgarian',         srp: 'Serbian',              ell: 'Greek',
+};
+
+// ── Small inline reload button style ─────────────────────────────────────────
+const RELOAD_BTN_STYLE =
+    'border:none;background:transparent;color:#01d277;cursor:pointer;' +
+    'padding:0 0 0 6px;font-size:11px;vertical-align:middle;line-height:1';
+
 // ── Internal: get loaded Kendo DataSource (waits for data if empty) ───────────
 async function _getKendoDS() {
     const jq = (typeof unsafeWindow !== 'undefined' ? unsafeWindow.jQuery : null)
@@ -66,6 +87,77 @@ export async function getTmdbNextEpisode() {
     return Math.max(...map.keys()) + 1;
 }
 
+// ── Language fetch: TVDB nameTranslations → <select> in the TMDB config panel ─
+export function setupTmdbLangFetch() {
+    const trigger = () => {
+        const key = configPanel.querySelector('#tm-tvdb-key')?.value.trim();
+        const id  = configPanel.querySelector('#tm-tvdb-series-id')?.value.trim();
+        if (key && id) _fetchTvdbLangs(key, id);
+    };
+    configPanel.querySelector('#tm-tvdb-key')?.addEventListener('blur',  trigger);
+    configPanel.querySelector('#tm-tvdb-series-id')?.addEventListener('blur', trigger);
+    configPanel.querySelector('#tm-tvdb-lang-reload')?.addEventListener('click', trigger);
+}
+
+async function _fetchTvdbLangs(apiKey, seriesId) {
+    const wrap = configPanel.querySelector('#tm-tvdb-lang-wrap');
+    const hint = configPanel.querySelector('#tm-tvdb-lang-hint');
+    if (!wrap) return;
+
+    const currentVal = configPanel.querySelector('#tm-tvdb-lang')?.value || pget('tvdb_lang', 'tha');
+    wrap.innerHTML = '<span style="color:#9ab;font-size:12px">⏳ กำลัง login TVDB…</span>';
+
+    try {
+        // Step 1: Login
+        const loginRes = await gmRequest({
+            method:  'POST',
+            url:     'https://api4.thetvdb.com/v4/login',
+            headers: { 'Content-Type': 'application/json' },
+            data:    JSON.stringify({ apikey: apiKey }),
+        });
+        if (loginRes.status !== 200) throw new Error(`Login failed: HTTP ${loginRes.status}`);
+        const token = JSON.parse(loginRes.responseText).data?.token;
+        if (!token) throw new Error('ไม่ได้รับ token');
+
+        if (hint) hint.textContent = '⏳ กำลังโหลดภาษา…';
+
+        // Step 2: Fetch series extended → nameTranslations
+        const extRes = await gmRequest({
+            method:  'GET',
+            url:     `https://api4.thetvdb.com/v4/series/${encodeURIComponent(seriesId)}/extended`,
+            headers: { 'Authorization': `Bearer ${token}` },
+        });
+        if (extRes.status !== 200) throw new Error(`HTTP ${extRes.status}`);
+        const codes = JSON.parse(extRes.responseText).data?.nameTranslations ?? [];
+
+        if (!codes.length) throw new Error('ไม่พบข้อมูลภาษา');
+
+        const select = document.createElement('select');
+        select.id = 'tm-tvdb-lang';
+        let matched = false;
+        codes.forEach(code => {
+            const name  = ISO639_3[code];
+            const label = name ? `${code}  —  ${name}` : code;
+            const opt   = new Option(label, code);
+            if (code === currentVal) { opt.selected = true; matched = true; }
+            select.appendChild(opt);
+        });
+        if (!matched) select.options[0].selected = true;
+
+        wrap.innerHTML = '';
+        wrap.appendChild(select);
+        pset('tvdb_lang', select.value);
+        select.addEventListener('change', () => pset('tvdb_lang', select.value));
+        if (hint) { hint.style.color = ''; hint.textContent = `พบ ${codes.length} ภาษา`; }
+
+    } catch (e) {
+        wrap.innerHTML =
+            `<input id="tm-tvdb-lang" type="text"
+                value="${escHtml(currentVal)}" placeholder="eng / tha / jpn">`;
+        if (hint) { hint.style.color = '#f88'; hint.textContent = `โหลดไม่สำเร็จ (${e.message}) — พิมพ์เองได้`; }
+    }
+}
+
 // ── TMDB-side config panel HTML ───────────────────────────────────────────────
 export function buildTmdbPanelHtml() {
     const saved      = getSavedEpisodes();
@@ -111,10 +203,17 @@ export function buildTmdbPanelHtml() {
                 <input id="tm-tvdb-season" type="number" value="${urlSeason}" min="1">
             </div>
             <div class="tm-field">
-                <label class="tm-label">Language</label>
-                <input id="tm-tvdb-lang" type="text"
-                    value="tha" placeholder="eng / tha / jpn / zho">
-                <p class="tm-hint">ใช้รหัส ISO 639-3 เช่น eng, tha, jpn</p>
+                <label class="tm-label">
+                    Language
+                    <button type="button" id="tm-tvdb-lang-reload" style="${RELOAD_BTN_STYLE}"
+                        title="โหลดรายการภาษาที่มีในซีรี่นี้">🔄</button>
+                </label>
+                <div id="tm-tvdb-lang-wrap">
+                    <input id="tm-tvdb-lang" type="text"
+                        value="${escHtml(pget('tvdb_lang', 'tha'))}"
+                        placeholder="eng / tha / jpn / zho">
+                </div>
+                <p class="tm-hint" id="tm-tvdb-lang-hint">กรอก API Key + Series ID แล้วกด 🔄 เพื่อโหลดรายการภาษา</p>
             </div>
         </div>
 

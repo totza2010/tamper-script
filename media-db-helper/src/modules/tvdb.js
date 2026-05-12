@@ -17,6 +17,11 @@ import {
     buildManualSectionHtml,
 } from './core.js';
 
+// ── Small inline reload button style ─────────────────────────────────────────
+const RELOAD_BTN_STYLE =
+    'border:none;background:transparent;color:#01b4e4;cursor:pointer;' +
+    'padding:0 0 0 6px;font-size:11px;vertical-align:middle;line-height:1';
+
 // ── Read the starting episode number directly from the TVDB bulk-add form ─────
 export function getFormStartEpisode() {
     const el = document.querySelector('fieldset.noformat input[name="number[]"]');
@@ -53,8 +58,17 @@ export function buildTvdbPanelHtml() {
                 <input id="tm-season" type="number" value="${urlSeason}" min="1">
             </div>
             <div class="tm-field">
-                <label class="tm-label">Language</label>
-                <input id="tm-lang" type="text" value="en-US" placeholder="en-US / th-TH">
+                <label class="tm-label">
+                    Language
+                    <button type="button" id="tm-lang-reload" style="${RELOAD_BTN_STYLE}"
+                        title="โหลดรายการภาษาที่มีในซีรี่นี้">🔄</button>
+                </label>
+                <div id="tm-lang-wrap">
+                    <input id="tm-lang" type="text"
+                        value="${escHtml(pget('tmdb_lang', 'en-US'))}"
+                        placeholder="en-US / th-TH">
+                </div>
+                <p class="tm-hint" id="tm-lang-hint">กรอก API Key + Show ID แล้วกด 🔄 เพื่อโหลดรายการภาษา</p>
             </div>
         </div>
 
@@ -180,6 +194,66 @@ export function doFillTvdb() {
         previewOverlay.classList.remove('active');
         setPreviewStatus('', '');
     }, 2200);
+}
+
+// ── Language fetch: TMDB translations → <select> in the TVDB config panel ────
+export function setupTvdbLangFetch() {
+    const trigger = () => {
+        const key = configPanel.querySelector('#tm-key')?.value.trim();
+        const id  = configPanel.querySelector('#tm-show')?.value.trim();
+        if (key && id) _fetchTmdbLangs(key, id);
+    };
+    configPanel.querySelector('#tm-key')?.addEventListener('blur',  trigger);
+    configPanel.querySelector('#tm-show')?.addEventListener('blur', trigger);
+    configPanel.querySelector('#tm-lang-reload')?.addEventListener('click', trigger);
+}
+
+async function _fetchTmdbLangs(apiKey, showId) {
+    const wrap = configPanel.querySelector('#tm-lang-wrap');
+    const hint = configPanel.querySelector('#tm-lang-hint');
+    if (!wrap) return;
+
+    const currentVal = configPanel.querySelector('#tm-lang')?.value || pget('tmdb_lang', 'en-US');
+    wrap.innerHTML = '<span style="color:#9ab;font-size:12px">⏳ กำลังโหลดภาษา…</span>';
+
+    try {
+        const res = await gmRequest({
+            method: 'GET',
+            url: `https://api.themoviedb.org/3/tv/${encodeURIComponent(showId)}/translations` +
+                 `?api_key=${encodeURIComponent(apiKey)}`,
+        });
+        if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
+        const data  = JSON.parse(res.responseText);
+        const langs = (data.translations || []).map(t => {
+            const code  = `${t.iso_639_1}-${t.iso_3166_1}`;
+            const extra = t.name && t.name !== t.english_name ? ` (${t.name})` : '';
+            return { value: code, label: `${code}  —  ${t.english_name}${extra}` };
+        });
+
+        if (!langs.length) throw new Error('ไม่พบข้อมูลภาษา');
+
+        const select = document.createElement('select');
+        select.id = 'tm-lang';
+        let matched = false;
+        langs.forEach(({ value, label }) => {
+            const opt = new Option(label, value);
+            if (value === currentVal) { opt.selected = true; matched = true; }
+            select.appendChild(opt);
+        });
+        if (!matched) select.options[0].selected = true;
+
+        wrap.innerHTML = '';
+        wrap.appendChild(select);
+        pset('tmdb_lang', select.value);
+        select.addEventListener('change', () => pset('tmdb_lang', select.value));
+        if (hint) { hint.style.color = ''; hint.textContent = `พบ ${langs.length} ภาษา`; }
+
+    } catch (e) {
+        wrap.innerHTML =
+            `<input id="tm-lang" type="text"
+                value="${escHtml(currentVal)}" placeholder="en-US / th-TH">`;
+        if (hint) { hint.style.color = '#f88'; hint.textContent = `โหลดไม่สำเร็จ (${e.message}) — พิมพ์เองได้`; }
+    }
 }
 
 // ── TVDB form helpers ─────────────────────────────────────────────────────────

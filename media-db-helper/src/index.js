@@ -22,6 +22,7 @@ import {
     buildTvdbPanelHtml,
     doFetchFromTmdb,
     doFillTvdb,
+    setupTvdbLangFetch,
 } from './modules/tvdb.js';
 
 // ── TMDB-specific ─────────────────────────────────────────────────────────────
@@ -31,12 +32,17 @@ import {
     doFetchFromTvdb,
     doAddToTmdb,
     doLoadSaved,
+    setupTmdbLangFetch,
 } from './modules/tmdb.js';
 
 // ════════════════════════════════════════════════════════════════════════════
 // BUILD SITE-SPECIFIC CONFIG PANEL
 // ════════════════════════════════════════════════════════════════════════════
 configPanel.innerHTML = isTvdb ? buildTvdbPanelHtml() : buildTmdbPanelHtml();
+
+// Wire language auto-fetch (site-specific; safe to call once after HTML is set)
+if (isTvdb) setupTvdbLangFetch();
+else        setupTmdbLangFetch();
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
 configPanel.querySelectorAll('.tm-tab').forEach(tab => {
