@@ -200,7 +200,7 @@ export async function doFetchFromTvdb() {
         return;
     }
 
-    const mapped = seasonEps.slice(0, MAX_ROWS).map(ep => ({
+    const mapped = seasonEps.map(ep => ({
         episode_number: ep.number,
         name:     ep.name     || '',
         overview: ep.overview || '',
@@ -212,7 +212,7 @@ export async function doFetchFromTvdb() {
     configOverlay.classList.remove('active');
     showPreview(
         mapped,
-        `TVDB API · Series ${seriesId} · Season ${season} · ${mapped.length}/${seasonEps.length} ตอน`
+        `TVDB API · Series ${seriesId} · Season ${season} · ${mapped.length} ตอน`
     );
 }
 
@@ -328,8 +328,5 @@ export function doLoadSaved() {
     }
     setConfigStatus('', '');
     configOverlay.classList.remove('active');
-    showPreview(
-        saved.slice(0, MAX_ROWS),
-        `Saved · ${pget('show_name') || '—'} · Season ${urlSeason}`
-    );
+    showPreview(saved, `Saved · ${pget('show_name') || '—'} · Season ${urlSeason}`);
 }

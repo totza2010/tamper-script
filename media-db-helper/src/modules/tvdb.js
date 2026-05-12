@@ -7,7 +7,6 @@
 // ════════════════════════════════════════════════════════════════════════════
 
 import {
-    MAX_ROWS,
     urlSeason,
     pget, pset,
     escHtml, gmRequest,
@@ -122,7 +121,9 @@ export async function doFetchFromTmdb() {
         return;
     }
 
-    const mapped = all.slice(startIdx, startIdx + MAX_ROWS).map(ep => ({
+    // Take all remaining episodes from the detected start point (no artificial cap).
+    // doFillTvdb will add exactly as many rows as needed.
+    const mapped = all.slice(startIdx).map(ep => ({
         episode_number: ep.episode_number,
         name:     ep.name     || '',
         overview: ep.overview || '',
@@ -134,7 +135,7 @@ export async function doFetchFromTmdb() {
     configOverlay.classList.remove('active');
     showPreview(
         mapped,
-        `TMDB · Show ${showId} · Season ${season} · ${mapped.length}/${all.length} ตอน`
+        `TMDB · Show ${showId} · Season ${season} · ตอน ${startEp}–${all[all.length - 1].episode_number} (${mapped.length} ตอน)`
     );
 }
 
@@ -150,16 +151,17 @@ export function doFillTvdb() {
 
     const addBtn = fieldset.querySelector('button.multirow-add');
     let rows     = _getRows(fieldset);
-    const needed = Math.min(state.previewEpisodes.length, MAX_ROWS);
+    const needed = state.previewEpisodes.length;
 
+    // Click "add row" as many times as needed (generous attempt limit)
     let attempts = 0;
-    while (rows.length < needed && addBtn && attempts++ < 30) {
+    while (rows.length < needed && addBtn && attempts++ < needed * 2 + 10) {
         addBtn.click();
         rows = _getRows(fieldset);
     }
 
     state.previewEpisodes.forEach((ep, i) => {
-        if (i >= rows.length || i >= MAX_ROWS) return;
+        if (i >= rows.length) return;
         const row = rows[i];
         _setVal(row, 'input[name="number[]"]',     ep.episode_number);
         _setVal(row, 'input[name="name[]"]',        ep.name);
@@ -168,9 +170,10 @@ export function doFillTvdb() {
         _setVal(row, 'input[name="runtime[]"]',      ep.runtime);
     });
 
+    const filled = Math.min(needed, rows.length);
     saveEpisodes(state.previewEpisodes);
     setPreviewStatus(
-        `เติมข้อมูล TVDB สำเร็จ ${needed} ตอน · บันทึกสำหรับใช้ใน TMDB ด้วย`,
+        `เติมข้อมูล TVDB สำเร็จ ${filled} ตอน · บันทึกสำหรับใช้ใน TMDB ด้วย`,
         'ok'
     );
     setTimeout(() => {

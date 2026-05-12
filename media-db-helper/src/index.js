@@ -6,7 +6,7 @@ import './scss/styles.scss';
 import {
     isTvdb, isTmdb,
     urlSeason,
-    state, MAX_ROWS,
+    state,
     pget, pset,
     buildManualEpisodes,
     triggerBtn, configOverlay, configPanel, previewOverlay, previewPanel,
@@ -108,18 +108,14 @@ async function doManual() {
     pset('manual_airdays', JSON.stringify(airDays));
 
     const episodes = buildManualEpisodes(startEpN, newEpsCount, startDate, airDays, prefix, runtime);
-    const capped   = episodes.slice(0, MAX_ROWS);
 
     const rangeLabel = newEpsCount === 1
         ? `ตอน ${startEpN}`
         : `ตอน ${startEpN}–${totalEps}`;
-    const capNote = capped.length < episodes.length
-        ? ` (แสดง ${capped.length} จาก ${episodes.length})`
-        : '';
 
     setConfigStatus('', '');
     configOverlay.classList.remove('active');
-    showPreview(capped, `Manual · ${showName || '—'} · Season ${season} · ${rangeLabel}${capNote}`);
+    showPreview(episodes, `Manual · ${showName || '—'} · Season ${season} · ${rangeLabel}`);
 }
 
 // ════════════════════════════════════════════════════════════════════════════

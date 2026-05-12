@@ -310,7 +310,9 @@ export function setPreviewStatus(msg, type) {
 
 // ── Preview modal ─────────────────────────────────────────────────────────────
 export function showPreview(episodes, subtitle) {
-    state.previewEpisodes = episodes.slice(0, MAX_ROWS);
+    // No global cap here — TVDB side caps inside doFillTvdb() (form limit = 25).
+    // TMDB side can add any number of episodes one-by-one via Kendo DataSource.
+    state.previewEpisodes = [...episodes];
     previewPanel.querySelector('#tm-preview-subtitle').textContent = subtitle;
     renderPreviewTable();
     setPreviewStatus('', '');
