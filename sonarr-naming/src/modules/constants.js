@@ -70,6 +70,7 @@ export const EDITIONS = [
     { label: "Collector's",     value: "Collectors"   },
     { label: "Translate",       value: "Translate"    },
     { label: "Channel 7 voice", value: "CH7Voice"     },
+    { label: "AI Upscaled", value: "Upscaled"     },
 ];
 
 // ── Language definitions ──────────────────────────────────────────────────────
