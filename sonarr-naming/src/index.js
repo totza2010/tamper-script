@@ -37,6 +37,41 @@ function makeRow(labelText, rightEl) {
     return row;
 }
 
+// ── Multi-part prefix helpers ─────────────────────────────────────────────────
+// A leading "partN-" token on the Release Group (e.g. "part2-AudioENSubTHEN").
+const PART_TOKEN_RE = /^(part\d+)-/i;
+
+/** Split a leading "partN-" token off the Release Group value. */
+function parsePartToken(raw) {
+    const m = (raw ?? "").match(PART_TOKEN_RE);
+    return m ? { token: m[1].toLowerCase(), rest: raw.slice(m[0].length) }
+             : { token: null, rest: raw ?? "" };
+}
+
+/** Single-select part picker: part1…part5, click an active pill to clear it. */
+function makePartPills(activeToken, onChange) {
+    const wrap = document.createElement("div");
+    wrap.className = "rg-pills";
+
+    ["part1", "part2", "part3", "part4", "part5"].forEach(tok => {
+        const p = document.createElement("div");
+        p.className = "rg-pill part";
+        p.textContent = tok;
+        p.dataset.value = tok;
+        if (tok === activeToken) p.classList.add("active");
+        p.addEventListener("click", () => {
+            const wasActive = p.classList.contains("active");
+            wrap.querySelectorAll(".rg-pill").forEach(x => x.classList.remove("active"));
+            if (!wasActive) p.classList.add("active");
+            onChange();
+        });
+        wrap.appendChild(p);
+    });
+
+    const get = () => wrap.querySelector(".rg-pill.active")?.dataset.value ?? null;
+    return { el: wrap, get };
+}
+
 // ── Release Group modal injection ─────────────────────────────────────────────
 function inject(target) {
     if (target.dataset.rgInjected) return;
@@ -45,7 +80,9 @@ function inject(target) {
     const releaseInput = document.querySelector("input[name='releaseGroup']");
     if (!releaseInput) return;
 
-    const parsed = parseRG(releaseInput.value);
+    // Peel off any existing "partN-" prefix so the rest parses cleanly.
+    const { token: partToken, rest: rgBody } = parsePartToken(releaseInput.value);
+    const parsed = parseRG(rgBody);
     const container = document.createElement("div");
     container.id = "rg-container";
 
@@ -65,6 +102,10 @@ function inject(target) {
     dual.append(audioComp.el, subComp.el);
     container.appendChild(makeRow("Language", dual));
 
+    // Multi-part (single-select prefix — partN-)
+    const partComp = makePartPills(partToken, sync);
+    container.appendChild(makeRow("Multi-part", partComp.el));
+
     // Preview
     const preview = document.createElement("div");
     preview.id = "rg-preview";
@@ -78,7 +119,10 @@ function inject(target) {
         const edts  = edtComp.get();   // string[]
         const audio = audioComp.get();
         const sub   = subComp.get();
-        const value = buildValue(nets, edts, audio, sub);
+        const part  = partComp.get();  // "part2" | null
+
+        const body  = buildValue(nets, edts, audio, sub);
+        const value = part ? (body ? `${part}-${body}` : part) : body;
 
         preview.textContent = value || "—";
         preview.className   = !value ? "empty"
