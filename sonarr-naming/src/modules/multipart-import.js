@@ -6,7 +6,9 @@
 // releases (2+ files that together make one episode) the mapping has to be done
 // by hand, file by file. This automates it:
 //   • pair consecutive files onto the same episode (N parts per episode)
-//   • prepend "partN-" to each file's Release Group
+//   • build the Release Group (network/edition/audio/sub) right here — the files
+//     aren't imported yet so Sonarr has no mediainfo/language to read — and
+//     prepend partN- to it
 //   • reprocess so Sonarr clears the stale "Episodes not selected" rejection
 // Afterwards the user reviews the table and clicks Sonarr's own Import button.
 //
@@ -16,8 +18,13 @@
 
 import { apiReq } from "./api.js";
 import { showToast } from "./utils.js";
+import { NETWORKS, EDITIONS } from "./constants.js";
+import { makeMultiPills, makeLangPicker } from "./pickers.js";
+import { buildValue } from "./rg-parser.js";
 
 const UPDATE_ACTION = "interactiveImport/updateInteractiveImportItems";
+
+// ── Redux store access ────────────────────────────────────────────────────────
 
 /** Walk up a row cell's React fiber to find the Redux store. */
 function getImportStore() {
@@ -45,10 +52,7 @@ function updateItems(store, ids, patch) {
     store.dispatch({ type: UPDATE_ACTION, payload: { ids, ...patch } });
 }
 
-/** Strip an existing leading "partN-" so we never double-prefix. */
-function stripPartPrefix(rg) {
-    return (rg ?? "").replace(/^part\d+-/i, "");
-}
+// ── Episode fetching ──────────────────────────────────────────────────────────
 
 const epCache = new Map();
 async function fetchEpisodes(seriesId, seasonNumber) {
@@ -63,98 +67,161 @@ async function fetchEpisodes(seriesId, seasonNumber) {
     return sorted;
 }
 
-/**
- * Auto-pair the files in the open Interactive Import modal.
- * Set the base Release Group first (🏷 button) — this only adds the partN prefix
- * on top of whatever Release Group each row already has.
- */
-export async function autoPairMultipart() {
-    const store = getImportStore();
-    if (!store) { alert("เปิดหน้า Interactive Import (Manual Import) ก่อน แล้วค่อยกดปุ่มนี้"); return; }
+// ── Pairing + apply ───────────────────────────────────────────────────────────
 
-    const items = getItems(store);
-    if (!items.length) { alert("ไม่พบไฟล์ในหน้านี้"); return; }
-
-    const partsStr = window.prompt(
-        "กี่ part ต่อ 1 ตอน?  (เช่น 2 = part1 + part2 ต่อ episode)\n" +
-        "ไฟล์จะถูกจับคู่ตามลำดับชื่อไฟล์", "2");
-    if (partsStr == null) return;
-    const parts = parseInt(partsStr, 10);
-    if (!(parts >= 1)) { alert("ใส่จำนวน part เป็นเลขจำนวนเต็มตั้งแต่ 1 ขึ้นไป"); return; }
-
-    // Group by series + season, then chunk each group by `parts`.
+/** Compute file→episode→part assignments for every item, grouped by season. */
+async function computeAssignments(items, parts) {
     const bySeason = new Map();
     for (const it of items) {
         const k = `${it.seriesId}|${it.seasonNumber}`;
         (bySeason.get(k) ?? bySeason.set(k, []).get(k)).push(it);
     }
 
-    const assignments = [];   // { item, episode, part }
-    const summary = [];
-    try {
-        for (const [k, group] of bySeason) {
-            const [seriesId, season] = k.split("|").map(Number);
-            const eps = await fetchEpisodes(seriesId, season);
-            const sortedItems = group.slice().sort((a, b) =>
-                (a.relativePath ?? "").localeCompare(b.relativePath ?? "", undefined, { numeric: true }));
+    const assignments = [];
+    for (const [k, group] of bySeason) {
+        const [seriesId, season] = k.split("|").map(Number);
+        const eps = await fetchEpisodes(seriesId, season);
+        const sortedItems = group.slice().sort((a, b) =>
+            (a.relativePath ?? "").localeCompare(b.relativePath ?? "", undefined, { numeric: true }));
 
-            for (let i = 0; i < sortedItems.length; i++) {
-                const episode = eps[Math.floor(i / parts)];
-                if (!episode) break;   // more files than episodes — stop this season
-                assignments.push({ item: sortedItems[i], episode, part: (i % parts) + 1 });
-            }
-            const mapped = assignments.filter(a => group.includes(a.item)).length;
-            summary.push(`S${String(season).padStart(2, "0")}: ${sortedItems.length} ไฟล์ → ${Math.ceil(mapped / parts)} ตอน`);
+        for (let i = 0; i < sortedItems.length; i++) {
+            const episode = eps[Math.floor(i / parts)];
+            if (!episode) break;   // more files than episodes — stop this season
+            assignments.push({ item: sortedItems[i], episode, part: (i % parts) + 1 });
         }
-    } catch (e) {
-        alert("ดึงรายการ episode ไม่สำเร็จ: " + e.message);
-        return;
     }
+    return assignments;
+}
 
-    if (!assignments.length) { alert("จับคู่ไม่ได้ — ไม่พบ episode ของซีรีส์นี้"); return; }
-
-    if (!confirm(
-        `Multi-part pair (${parts} part/ตอน)\n${summary.join("\n")}\n\n` +
-        `แต่ละไฟล์: map episode ตามลำดับ + ใส่ part1…part${parts} นำหน้า Release Group เดิม\n\n` +
-        `เคล็ดลับ: ตั้ง Release Group ภาษา (🏷) ให้ครบก่อน จะได้เป็น part1-AudioENSubEN\n\nยืนยัน?`
-    )) return;
-
-    // Apply episode + Release Group per file.
+/** Apply episode + Release Group to every item, then reprocess to clear flags. */
+async function applyPairing(store, assignments, rgBody) {
     for (const { item, episode, part } of assignments) {
-        const base = stripPartPrefix(item.releaseGroup ?? "");
-        const rg = base ? `part${part}-${base}` : `part${part}`;
+        const rg = rgBody ? `part${part}-${rgBody}` : `part${part}`;
         updateItems(store, [item.id], { episodes: [episode], releaseGroup: rg });
     }
 
-    // Reprocess the affected files so Sonarr recomputes rejections (clears the
-    // stale "Episodes not selected" danger flag) while keeping our releaseGroup.
-    try {
-        const fresh = getItems(store);
-        const affected = new Set(assignments.map(a => a.item.id));
-        const payload = fresh.filter(it => affected.has(it.id)).map(it => ({
-            path:         it.path,
-            seriesId:     it.seriesId,
-            seasonNumber: it.seasonNumber,
-            episodeIds:   (it.episodes ?? []).map(e => e.id),
-            quality:      it.quality,
-            languages:    it.languages,
-            releaseGroup: it.releaseGroup,
-            downloadId:   it.downloadId,
-            indexerFlags: it.indexerFlags,
-            releaseType:  it.releaseType,
-        }));
-        const resp = await apiReq("POST", "/api/v3/manualimport", payload);
-        if (Array.isArray(resp)) {
-            for (const r of resp) {
-                const match = fresh.find(it => it.path === r.path);
-                if (match) updateItems(store, [match.id], { rejections: r.rejections ?? [] });
-            }
+    const fresh = getItems(store);
+    const affected = new Set(assignments.map(a => a.item.id));
+    const payload = fresh.filter(it => affected.has(it.id)).map(it => ({
+        path:         it.path,
+        seriesId:     it.seriesId,
+        seasonNumber: it.seasonNumber,
+        episodeIds:   (it.episodes ?? []).map(e => e.id),
+        quality:      it.quality,
+        languages:    it.languages,
+        releaseGroup: it.releaseGroup,
+        downloadId:   it.downloadId,
+        indexerFlags: it.indexerFlags,
+        releaseType:  it.releaseType,
+    }));
+    const resp = await apiReq("POST", "/api/v3/manualimport", payload);
+    if (Array.isArray(resp)) {
+        for (const r of resp) {
+            const match = fresh.find(it => it.path === r.path);
+            if (match) updateItems(store, [match.id], { rejections: r.rejections ?? [] });
         }
-    } catch (e) {
-        console.warn("[RG MultiPair] reprocess failed:", e.message);
-        showToast("จับคู่แล้ว แต่ refresh สถานะไม่สำเร็จ — ตรวจ rejection ในตารางก่อน Import");
-        return;
+    }
+}
+
+// ── Modal UI ──────────────────────────────────────────────────────────────────
+
+function closeModal() { document.getElementById("mpp-overlay")?.remove(); }
+
+/**
+ * Entry point — opens the Multi-part pair modal.
+ * Set languages here (files aren't imported yet, so mediainfo is unavailable);
+ * the modal builds the full Release Group and prepends partN in one step.
+ */
+export function autoPairMultipart() {
+    const store = getImportStore();
+    if (!store) { alert("เปิดหน้า Interactive Import (Manual Import) ก่อน แล้วค่อยกดปุ่มนี้"); return; }
+    if (!getItems(store).length) { alert("ไม่พบไฟล์ในหน้านี้"); return; }
+
+    closeModal();
+
+    const overlay = document.createElement("div");
+    overlay.id = "mpp-overlay";
+    overlay.innerHTML = `
+        <div id="mpp-modal">
+            <div class="mpp-head"><span>🔗 Multi-part pair</span><span class="mpp-close">✕</span></div>
+            <div class="mpp-sub">จับคู่ไฟล์ตามลำดับชื่อเข้า episode เดียวกัน + ตั้ง Release Group พร้อม partN</div>
+            <div class="mpp-body">
+                <div class="mpp-row">
+                    <div class="mpp-row-lbl">Parts / ตอน</div>
+                    <div class="mpp-row-right" style="display:flex;align-items:center">
+                        <input type="number" class="mpp-parts" min="1" value="2">
+                        <span class="mpp-parts-hint">เช่น 2 = part1 + part2 ต่อ episode</span>
+                    </div>
+                </div>
+                <div class="mpp-row"><div class="mpp-row-lbl">Network</div><div class="mpp-row-right mpp-net"></div></div>
+                <div class="mpp-row"><div class="mpp-row-lbl">Edition</div><div class="mpp-row-right mpp-edt"></div></div>
+                <div class="mpp-row"><div class="mpp-row-lbl">Language</div><div class="mpp-row-right"><div class="rg-dual mpp-langs"></div></div></div>
+                <div class="mpp-preview-lbl">Preview</div>
+                <div class="mpp-preview" id="mpp-preview"></div>
+            </div>
+            <div class="mpp-btns">
+                <button class="mpp-btn mpp-cancel">Cancel</button>
+                <button class="mpp-btn mpp-apply">Apply</button>
+            </div>
+        </div>`;
+    document.body.appendChild(overlay);
+
+    const partsInput = overlay.querySelector(".mpp-parts");
+    const preview    = overlay.querySelector("#mpp-preview");
+    const applyBtn   = overlay.querySelector(".mpp-apply");
+
+    // Pickers (reuse the Release Group builder components)
+    const netComp   = makeMultiPills(NETWORKS, "net", [], sync);
+    const edtComp   = makeMultiPills(EDITIONS, "edt", [], sync);
+    const audioComp = makeLangPicker("Audio", [], sync);
+    const subComp   = makeLangPicker("Subtitle", [], sync);
+    overlay.querySelector(".mpp-net").appendChild(netComp.el);
+    overlay.querySelector(".mpp-edt").appendChild(edtComp.el);
+    overlay.querySelector(".mpp-langs").append(audioComp.el, subComp.el);
+
+    function currentBody() {
+        return buildValue(netComp.get(), edtComp.get(), audioComp.get(), subComp.get());
     }
 
-    showToast(`จับคู่ multi-part ${assignments.length} ไฟล์เสร็จ — ตรวจในตารางแล้วกด Import`);
+    function sync() {
+        const parts = Math.max(1, parseInt(partsInput.value, 10) || 1);
+        const body  = currentBody();
+        const lines = [];
+        for (let p = 1; p <= Math.min(parts, 6); p++) {
+            lines.push(body ? `part${p}-${body}` : `part${p}`);
+        }
+        preview.innerHTML = lines.map(l => `<div>${l}</div>`).join("");
+    }
+
+    partsInput.addEventListener("input", sync);
+    sync();
+
+    // Close handlers
+    overlay.querySelector(".mpp-close").addEventListener("click", closeModal);
+    overlay.querySelector(".mpp-cancel").addEventListener("click", closeModal);
+    overlay.addEventListener("click", e => { if (e.target === overlay) closeModal(); });
+
+    // Apply
+    applyBtn.addEventListener("click", async () => {
+        const parts = parseInt(partsInput.value, 10);
+        if (!(parts >= 1)) { alert("ใส่จำนวน part เป็นเลขจำนวนเต็มตั้งแต่ 1 ขึ้นไป"); return; }
+
+        applyBtn.disabled = true;
+        applyBtn.textContent = "กำลังจับคู่…";
+        try {
+            const items = getItems(store);
+            const assignments = await computeAssignments(items, parts);
+            if (!assignments.length) { alert("จับคู่ไม่ได้ — ไม่พบ episode ของซีรีส์นี้"); return; }
+
+            await applyPairing(store, assignments, currentBody());
+            closeModal();
+            showToast(`จับคู่ multi-part ${assignments.length} ไฟล์เสร็จ — ตรวจในตารางแล้วกด Import`);
+        } catch (e) {
+            console.warn("[RG MultiPair]", e.message);
+            alert("ทำไม่สำเร็จ: " + e.message);
+        } finally {
+            applyBtn.disabled = false;
+            applyBtn.textContent = "Apply";
+        }
+    });
 }
