@@ -93,16 +93,23 @@ async function computeAssignments(items, parts) {
     return assignments;
 }
 
-/** Apply episode + Release Group to every item, then reprocess to clear flags. */
-async function applyPairing(store, assignments, rgBody) {
+/** Apply episode + Release Group to every item (synchronous store dispatches). */
+function applyMapping(store, assignments, rgBody) {
     for (const { item, episode, part } of assignments) {
         const rg = rgBody ? `part${part}-${rgBody}` : `part${part}`;
         updateItems(store, [item.id], { episodes: [episode], releaseGroup: rg });
     }
+}
 
-    const fresh = getItems(store);
+/**
+ * Reprocess the affected items via the API so Sonarr recomputes rejections
+ * (clears the stale "Episodes not selected" danger flag) while keeping our
+ * releaseGroup. Batched to avoid one huge slow request. Runs in the background.
+ */
+async function reprocessAssigned(store, assignments) {
     const affected = new Set(assignments.map(a => a.item.id));
-    const payload = fresh.filter(it => affected.has(it.id)).map(it => ({
+    const items = getItems(store).filter(it => affected.has(it.id));
+    const toPayload = it => ({
         path:         it.path,
         seriesId:     it.seriesId,
         seasonNumber: it.seasonNumber,
@@ -113,12 +120,17 @@ async function applyPairing(store, assignments, rgBody) {
         downloadId:   it.downloadId,
         indexerFlags: it.indexerFlags,
         releaseType:  it.releaseType,
-    }));
-    const resp = await apiReq("POST", "/api/v3/manualimport", payload);
-    if (Array.isArray(resp)) {
-        for (const r of resp) {
-            const match = fresh.find(it => it.path === r.path);
-            if (match) updateItems(store, [match.id], { rejections: r.rejections ?? [] });
+    });
+
+    const CHUNK = 6;
+    for (let i = 0; i < items.length; i += CHUNK) {
+        const batch = items.slice(i, i + CHUNK);
+        const resp = await apiReq("POST", "/api/v3/manualimport", batch.map(toPayload));
+        if (Array.isArray(resp)) {
+            for (const r of resp) {
+                const match = batch.find(it => it.path === r.path);
+                if (match) updateItems(store, [match.id], { rejections: r.rejections ?? [] });
+            }
         }
     }
 }
@@ -206,22 +218,42 @@ export function autoPairMultipart() {
         const parts = parseInt(partsInput.value, 10);
         if (!(parts >= 1)) { alert("ใส่จำนวน part เป็นเลขจำนวนเต็มตั้งแต่ 1 ขึ้นไป"); return; }
 
+        // Pairing needs each file to have a series + season assigned first.
+        const items = getItems(store).filter(it => it.seriesId != null && it.seasonNumber != null);
+        if (!items.length) {
+            alert("ไฟล์ยังไม่ได้เลือกเรื่อง/ซีซัน — ในตารางกำหนด Series และ Season ให้ไฟล์ก่อน แล้วลองใหม่");
+            return;
+        }
+
         applyBtn.disabled = true;
         applyBtn.textContent = "กำลังจับคู่…";
+        let assignments;
         try {
-            const items = getItems(store);
-            const assignments = await computeAssignments(items, parts);
-            if (!assignments.length) { alert("จับคู่ไม่ได้ — ไม่พบ episode ของซีรีส์นี้"); return; }
-
-            await applyPairing(store, assignments, currentBody());
-            closeModal();
-            showToast(`จับคู่ multi-part ${assignments.length} ไฟล์เสร็จ — ตรวจในตารางแล้วกด Import`);
+            assignments = await computeAssignments(items, parts);
         } catch (e) {
-            console.warn("[RG MultiPair]", e.message);
-            alert("ทำไม่สำเร็จ: " + e.message);
-        } finally {
             applyBtn.disabled = false;
             applyBtn.textContent = "Apply";
+            alert("ดึงรายการ episode ไม่สำเร็จ: " + e.message);
+            return;
         }
+        if (!assignments.length) {
+            applyBtn.disabled = false;
+            applyBtn.textContent = "Apply";
+            alert("จับคู่ไม่ได้ — ไม่พบ episode ของซีรีส์/ซีซันนี้");
+            return;
+        }
+
+        // Apply episode + Release Group synchronously, then close and reprocess
+        // in the background so the modal never appears frozen on a slow request.
+        applyMapping(store, assignments, currentBody());
+        closeModal();
+        showToast(`จับคู่ ${assignments.length} ไฟล์แล้ว — กำลัง refresh สถานะ…`);
+
+        reprocessAssigned(store, assignments)
+            .then(() => showToast("พร้อม Import — ตรวจตารางแล้วกด Import ของ Sonarr"))
+            .catch(e => {
+                console.warn("[RG MultiPair] reprocess failed:", e.message);
+                showToast("จับคู่แล้ว แต่ refresh สถานะไม่ครบ — ถ้ายังมี ⚠ ให้กด episode ซ้ำ 1 ไฟล์เพื่อ refresh");
+            });
     });
 }
