@@ -146,59 +146,6 @@ function triggerBulkSelect(value) {
     sel.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-// ── Force Import (multi-part) ─────────────────────────────────────────────────
-// Sonarr disables Import when several files map to one episode. The button's own
-// onClick guards on React state (`r||null==o||o(e)`), so clearing the DOM
-// `disabled` attribute is not enough. Instead we grab Sonarr's real onPress
-// (onImportSelectedPress) off the React fiber and invoke it directly.
-
-function reactFiber(el) {
-    const k = Object.keys(el).find(k =>
-        k.startsWith("__reactFiber$") || k.startsWith("__reactInternalInstance$"));
-    return k ? el[k] : null;
-}
-
-/** Walk up from the Import <button> and return the outermost contiguous onPress. */
-function findImportOnPress(btn) {
-    let fib = reactFiber(btn);
-    let lastOnPress = null, gap = 0;
-    for (let i = 0; i < 8 && fib; i++) {
-        const op = fib.memoizedProps?.onPress;
-        if (typeof op === "function") { lastOnPress = op; gap = 0; }
-        else if (lastOnPress && ++gap >= 2) break;
-        fib = fib.return;
-    }
-    return lastOnPress;
-}
-
-function forceImport() {
-    const footer = document.querySelector("[class*='InteractiveImportModalContent-footer']");
-    const importBtn = footer &&
-        [...footer.querySelectorAll("button")].find(b => b.textContent.trim() === "Import");
-    if (!importBtn) { alert("ไม่พบปุ่ม Import ในหน้านี้"); return; }
-
-    if (!confirm(
-        "Force Import — สั่งนำเข้าไฟล์ที่เลือกทั้งหมดผ่าน Sonarr แม้ปุ่มจะถูกล็อก\n\n" +
-        "• ต้อง map episode + ตั้ง Release Group (partN) ให้ครบก่อน\n" +
-        "• ถ้าหลายไฟล์ชี้ episode เดียวกัน Sonarr จะย้ายไฟล์ก่อนหน้าไป Recycle Bin " +
-        "(ต้องย้ายกลับเข้าโฟลเดอร์เอง)\n\nยืนยันนำเข้า?"
-    )) return;
-
-    const onPress = findImportOnPress(importBtn);
-    if (onPress) {
-        try {
-            onPress({ preventDefault() {}, stopPropagation() {} });
-            return;
-        } catch (e) {
-            console.warn("[RG ForceImport] onPress failed:", e);
-        }
-    }
-    // Fallback: best-effort DOM unlock + native click
-    importBtn.disabled = false;
-    importBtn.classList.remove("isDisabled");
-    importBtn.click();
-}
-
 function injectImportShortcuts(footer) {
     if (footer.dataset.iiAdded) return;
     footer.dataset.iiAdded = "true";
@@ -227,17 +174,6 @@ function injectImportShortcuts(footer) {
         btn.addEventListener("click", () => triggerBulkSelect(def.action));
         bar.appendChild(btn);
     });
-
-    // Force Import (multi-part) — separated on the right
-    const div = document.createElement("div");
-    div.className = "ii-divider";
-    bar.appendChild(div);
-    const forceBtn = document.createElement("div");
-    forceBtn.className = "ii-btn ii-force";
-    forceBtn.textContent = "🔗 Force Import";
-    forceBtn.title = "นำเข้าไฟล์ multi-part แม้ปุ่ม Import ถูกล็อก (หลายไฟล์ต่อ 1 episode)";
-    forceBtn.addEventListener("click", forceImport);
-    bar.appendChild(forceBtn);
 
     // Insert before the existing select dropdown
     const existingSelect = leftArea.querySelector("select");
