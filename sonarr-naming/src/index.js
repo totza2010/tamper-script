@@ -9,6 +9,7 @@ import { injectEpEditBtns } from "./modules/ep-editor.js";
 import { initFABs, watchNavigation } from "./modules/series-page.js";
 import { makeMultiPills, makeLangPicker } from "./modules/pickers.js";
 import { parseRG, buildValue } from "./modules/rg-parser.js";
+import { autoPairMultipart } from "./modules/multipart-import.js";
 
 // ── Apply saved settings ──────────────────────────────────────────────────────
 applySavedNetworks();
@@ -174,6 +175,17 @@ function injectImportShortcuts(footer) {
         btn.addEventListener("click", () => triggerBulkSelect(def.action));
         bar.appendChild(btn);
     });
+
+    // Multi-part auto-pair — separated on the right
+    const div = document.createElement("div");
+    div.className = "ii-divider";
+    bar.appendChild(div);
+    const pairBtn = document.createElement("div");
+    pairBtn.className = "ii-btn ii-pair";
+    pairBtn.textContent = "🔗 Multi-part pair";
+    pairBtn.title = "จับคู่ไฟล์ตามลำดับเข้า episode เดียวกัน + ใส่ partN ให้อัตโนมัติ";
+    pairBtn.addEventListener("click", autoPairMultipart);
+    bar.appendChild(pairBtn);
 
     // Insert before the existing select dropdown
     const existingSelect = leftArea.querySelector("select");
