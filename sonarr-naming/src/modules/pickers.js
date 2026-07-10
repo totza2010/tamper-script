@@ -32,6 +32,39 @@ export function makeMultiPills(items, extraClass, activeValues, onChange) {
     return { el: wrap, get, set };
 }
 
+// ── Multi-part / version token pills (single-select, click again to clear) ───
+
+/**
+ * Single-select token picker: part1…part5. A token that isn't one of the
+ * defaults (e.g. "ver2") is prepended as an extra pill so rebuilding the
+ * Release Group never silently drops it.
+ */
+export function makePartPills(activeToken, onChange) {
+    const wrap = document.createElement("div");
+    wrap.className = "rg-pills";
+
+    const tokens = ["part1", "part2", "part3", "part4", "part5"];
+    if (activeToken && !tokens.includes(activeToken)) tokens.unshift(activeToken);
+
+    tokens.forEach(tok => {
+        const p = document.createElement("div");
+        p.className = "rg-pill part";
+        p.textContent = tok;
+        p.dataset.value = tok;
+        if (tok === activeToken) p.classList.add("active");
+        p.addEventListener("click", () => {
+            const wasActive = p.classList.contains("active");
+            wrap.querySelectorAll(".rg-pill").forEach(x => x.classList.remove("active"));
+            if (!wasActive) p.classList.add("active");
+            onChange();
+        });
+        wrap.appendChild(p);
+    });
+
+    const get = () => wrap.querySelector(".rg-pill.active")?.dataset.value ?? null;
+    return { el: wrap, get };
+}
+
 // ── Language picker (searchable inline, no dropdown) ─────────────────────────
 
 export function makeLangPicker(colLabel, initCodes, onChange) {

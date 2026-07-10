@@ -7,7 +7,7 @@ import { NETWORKS, EDITIONS } from "./modules/constants.js";
 import { applySavedNetworks } from "./modules/settings.js";
 import { injectEpEditBtns } from "./modules/ep-editor.js";
 import { initFABs, watchNavigation } from "./modules/series-page.js";
-import { makeMultiPills, makeLangPicker } from "./modules/pickers.js";
+import { makeMultiPills, makeLangPicker, makePartPills } from "./modules/pickers.js";
 import { parseRG, buildValue } from "./modules/rg-parser.js";
 import { autoPairMultipart } from "./modules/multipart-import.js";
 
@@ -36,39 +36,6 @@ function makeRow(labelText, rightEl) {
     right.className = "rg-right"; right.appendChild(rightEl);
     row.append(lbl, right);
     return row;
-}
-
-// ── Multi-part prefix picker ──────────────────────────────────────────────────
-
-/**
- * Single-select part picker: part1…part5, click an active pill to clear it.
- * A token that isn't one of the defaults (e.g. "ver2") is added as an extra
- * pill so rebuilding the Release Group never silently drops it.
- */
-function makePartPills(activeToken, onChange) {
-    const wrap = document.createElement("div");
-    wrap.className = "rg-pills";
-
-    const tokens = ["part1", "part2", "part3", "part4", "part5"];
-    if (activeToken && !tokens.includes(activeToken)) tokens.unshift(activeToken);
-
-    tokens.forEach(tok => {
-        const p = document.createElement("div");
-        p.className = "rg-pill part";
-        p.textContent = tok;
-        p.dataset.value = tok;
-        if (tok === activeToken) p.classList.add("active");
-        p.addEventListener("click", () => {
-            const wasActive = p.classList.contains("active");
-            wrap.querySelectorAll(".rg-pill").forEach(x => x.classList.remove("active"));
-            if (!wasActive) p.classList.add("active");
-            onChange();
-        });
-        wrap.appendChild(p);
-    });
-
-    const get = () => wrap.querySelector(".rg-pill.active")?.dataset.value ?? null;
-    return { el: wrap, get };
 }
 
 // ── Release Group modal injection ─────────────────────────────────────────────

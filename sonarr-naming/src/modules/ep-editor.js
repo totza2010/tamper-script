@@ -3,7 +3,7 @@ import { getSpData, setSpData, isRefetching, setRefetching } from "./state.js";
 import { apiReq } from "./api.js";
 import { fmtEp, firstEp } from "./utils.js";
 import { parseRG, buildValue } from "./rg-parser.js";
-import { makeMultiPills, makeLangPicker } from "./pickers.js";
+import { makeMultiPills, makeLangPicker, makePartPills } from "./pickers.js";
 import { checkRenameMismatch } from "./rename.js";
 
 // ── Per-episode Release Group editor ─────────────────────────────────────────
@@ -79,6 +79,11 @@ export function openEpRGEditor(anchorEl, file, ep = null) {
     dual.append(audioComp.el, subComp.el);
     langRow.appendChild(dual);
 
+    // Multi-part (single-select token, sits after the [bracket] prefix)
+    const partRow = makeEpPopRow("Multi-part");
+    const partComp = makePartPills(parsed.token, sync);
+    partRow.appendChild(partComp.el);
+
     // Preview
     const prevRow = makeEpPopRow("Preview");
     const preview = document.createElement("div");
@@ -94,7 +99,7 @@ export function openEpRGEditor(anchorEl, file, ep = null) {
     saveBtn.className   = "ep-pop-btn ep-pop-save";   saveBtn.textContent   = "Save";
     btns.append(cancelBtn, saveBtn);
 
-    popup.append(netRow, edtRow, langRow, prevRow, btns);
+    popup.append(netRow, edtRow, langRow, partRow, prevRow, btns);
     document.body.appendChild(popup);
 
     function makeEpPopRow(label) {
@@ -106,7 +111,7 @@ export function openEpRGEditor(anchorEl, file, ep = null) {
 
     function sync() {
         const nets = netComp.get(), edts = edtComp.get();
-        const val  = buildValue(nets, edts, audioComp.get(), subComp.get(), parsed.token);
+        const val  = buildValue(nets, edts, audioComp.get(), subComp.get(), partComp.get());
         preview.textContent = val || "—";
         preview.className   = "ep-pop-preview" +
             (!val ? " empty" : nets.length || edts.length ? " has-network" : "");
@@ -129,7 +134,7 @@ export function openEpRGEditor(anchorEl, file, ep = null) {
 
     // Save — PUT → verify → unified rename check
     saveBtn.addEventListener("click", async () => {
-        const value = buildValue(netComp.get(), edtComp.get(), audioComp.get(), subComp.get(), parsed.token);
+        const value = buildValue(netComp.get(), edtComp.get(), audioComp.get(), subComp.get(), partComp.get());
         saveBtn.disabled = true;
 
         try {
