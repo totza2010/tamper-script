@@ -95,20 +95,31 @@ function computePairTargetName(importedFile, token) {
     if (!filename) return null;
     const dot  = filename.lastIndexOf(".");
     const ext  = dot >= 0 ? filename.slice(dot) : ".mkv";
-    let base   = dot >= 0 ? filename.slice(0, dot) : filename;
+    const base = dot >= 0 ? filename.slice(0, dot) : filename;
 
-    base = stripBaseToken(base, token);
-    const rg     = importedFile.releaseGroup ?? "";
-    const baseRG = withRGToken(rg, null);    // any existing token removed
-    const newRG  = withRGToken(rg, token);   // token placed after the prefix
+    const rg = importedFile.releaseGroup ?? "";
+    // No Release Group to key off — fall back to the plain Plex suffix.
+    if (!rg) return `${stripBaseToken(base, token)}-${token}${ext}`;
 
-    if (baseRG) {
-        const rgSuffix = `-${baseRG}`;
-        if (base.toLowerCase().endsWith(rgSuffix.toLowerCase())) {
-            return `${base.slice(0, base.length - rgSuffix.length)}-${newRG}${ext}`;
+    const newRG = withRGToken(rg, token);
+
+    // Sonarr's naming format ends with {Release Group}, so swap that suffix.
+    // The result then differs from the source by nothing but the token, which
+    // is exactly what Plex requires to stack the two files.
+    for (const current of [rg, withRGToken(rg, null)]) {
+        if (!current) continue;
+        const suffix = `-${current}`;
+        if (base.toLowerCase().endsWith(suffix.toLowerCase())) {
+            // When the Release Group carries no token, the old one may still be
+            // sitting in the filename ahead of it — drop it or we double up.
+            const head = stripBaseToken(base.slice(0, base.length - suffix.length), token);
+            return `${head}-${newRG}${ext}`;
         }
     }
-    return `${base}-${token}${ext}`;
+
+    // The filename doesn't end with its own Release Group (a double extension,
+    // a hand-edited name, …). Guessing here produces garbage — say we can't.
+    return null;
 }
 
 /**
@@ -513,17 +524,27 @@ function renderDetectedDecisionWrap(dec, epOpts, thisNum, autoPaired = false, pa
             // token, so compare against the computed target before declaring OK.
             const apIcon = mode === "version" ? "🔀" : "📼";
             const apCls  = mode === "version" ? "version" : "multipart";
-            const target = pairedInfo.expectedName;
-            const needsRename = target && target !== pairedInfo.thisFilename;
+            const target   = pairedInfo.expectedName;
+            const tokenLbl = mode === "version" ? "version" : "part";
 
-            const tail = needsRename
-                ? `<div class="unm-rename-lbl" style="margin-top:6px">Rename this file to match — copy &amp; rename manually:</div>
+            let tail;
+            if (!target) {
+                // computePairTargetName refused — the Sonarr filename doesn't end
+                // with its Release Group (double extension, hand-edited name, …).
+                tail = `<div class="unm-decision-note" style="color:#c55;margin-top:5px">
+                    Can't derive a target name — the Sonarr file's name doesn't end with its Release Group
+                    (<code>${esc(pairedInfo.pairReleaseGroup || "(none)")}</code>). Fix that file's name first.
+                </div>`;
+            } else if (target !== pairedInfo.thisFilename) {
+                tail = `<div class="unm-rename-lbl" style="margin-top:6px">Rename this file to match — copy &amp; rename manually:</div>
                    <div class="unm-rename-row">
                        <span class="unm-rename-target">${esc(target)}</span>
                        <button class="unm-copy-btn" data-copy="${esc(target)}" title="Copy filename">📋</button>
                    </div>
-                   <div class="unm-decision-note" style="color:#a70;margin-top:5px">Names differ by more than the ${mode === "version" ? "version" : "part"} token — Plex won't stack them.</div>`
-                : `<div class="unm-decision-note" style="color:#2a5a2a;margin-top:5px">Already correctly named — no rename needed.</div>`;
+                   <div class="unm-decision-note" style="color:#a70;margin-top:5px">Names differ by more than the ${tokenLbl} token — Plex won't stack them.</div>`;
+            } else {
+                tail = `<div class="unm-decision-note" style="color:#2a5a2a;margin-top:5px">Already correctly named — no rename needed.</div>`;
+            }
 
             return `<div class="unm-decision-wrap">
                 <div class="unm-decision unm-decision--${apCls}">
@@ -651,6 +672,7 @@ function buildDetectedPairCard(item, dec, epOpts, pairedFile, mode = "part") {
                 thisPartLabel: `ver${thisVn}`,
                 pairPartLabel: `ver${pairVn}`,
                 expectedName,
+                pairReleaseGroup: pairedFile.releaseGroup ?? "",
             };
         } else {
             pairedInfo = {
@@ -659,6 +681,7 @@ function buildDetectedPairCard(item, dec, epOpts, pairedFile, mode = "part") {
                 thisPartLabel: extractPartLabel(filename),
                 pairPartLabel: extractPartLabel(pfn),
                 expectedName,
+                pairReleaseGroup: pairedFile.releaseGroup ?? "",
             };
         }
         pairFilenameEncoded = encodeURIComponent(pfn);
