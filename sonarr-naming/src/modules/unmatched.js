@@ -508,26 +508,38 @@ function renderDetectedDecisionWrap(dec, epOpts, thisNum, autoPaired = false, pa
     // ── No decision yet ───────────────────────────────────────────────────────
     if (!d) {
         if (autoPaired && pairedInfo) {
-            // Already a valid pair — show info; × undo dismisses if needed
-            const apIcon  = mode === "version" ? "🔀" : "📼";
-            const apCls   = mode === "version" ? "version" : "multipart";
-            const thisLbl = mode === "version" ? "This file" : "This file";
-            const pairLbl = mode === "version" ? "Sonarr file" : "Sonarr file";
+            // Paired with a Sonarr file that also carries a part/version token.
+            // Plex only stacks files whose names are identical apart from that
+            // token, so compare against the computed target before declaring OK.
+            const apIcon = mode === "version" ? "🔀" : "📼";
+            const apCls  = mode === "version" ? "version" : "multipart";
+            const target = pairedInfo.expectedName;
+            const needsRename = target && target !== pairedInfo.thisFilename;
+
+            const tail = needsRename
+                ? `<div class="unm-rename-lbl" style="margin-top:6px">Rename this file to match — copy &amp; rename manually:</div>
+                   <div class="unm-rename-row">
+                       <span class="unm-rename-target">${esc(target)}</span>
+                       <button class="unm-copy-btn" data-copy="${esc(target)}" title="Copy filename">📋</button>
+                   </div>
+                   <div class="unm-decision-note" style="color:#a70;margin-top:5px">Names differ by more than the ${mode === "version" ? "version" : "part"} token — Plex won't stack them.</div>`
+                : `<div class="unm-decision-note" style="color:#2a5a2a;margin-top:5px">Already correctly named — no rename needed.</div>`;
+
             return `<div class="unm-decision-wrap">
                 <div class="unm-decision unm-decision--${apCls}">
                     <div class="unm-decision-head">
                         <span class="unm-decision-badge">${apIcon} ${esc(pairedInfo.thisPartLabel)} + ${esc(pairedInfo.pairPartLabel)}</span>
                         <button class="unm-undo-btn" title="Dismiss and re-configure">× undo</button>
                     </div>
-                    <div class="unm-rename-lbl" style="margin-top:6px">${thisLbl}:</div>
+                    <div class="unm-rename-lbl" style="margin-top:6px">This file:</div>
                     <div class="unm-rename-row">
                         <span class="unm-rename-target">${esc(pairedInfo.thisFilename)}</span>
                     </div>
-                    <div class="unm-rename-lbl" style="margin-top:6px">${pairLbl}:</div>
+                    <div class="unm-rename-lbl" style="margin-top:6px">Sonarr file:</div>
                     <div class="unm-rename-row">
                         <span class="unm-rename-target">${esc(pairedInfo.pairFilename)}</span>
                     </div>
-                    <div class="unm-decision-note" style="color:#2a5a2a;margin-top:5px">Already correctly named — no rename needed.</div>
+                    ${tail}
                 </div>
             </div>`;
         }
@@ -627,6 +639,9 @@ function buildDetectedPairCard(item, dec, epOpts, pairedFile, mode = "part") {
     let pairFilenameEncoded = "";
     if (autoPaired) {
         const { filename: pfn } = splitPath(pairedFile.relativePath ?? "");
+        // What this file must be called for Plex to stack it with the Sonarr
+        // file: the Sonarr name, with this file's token swapped in.
+        const expectedName = computePairTargetName(pairedFile, tokenLabel);
         if (mode === "version") {
             const thisVn = extractVersionNum(filename) ?? 1;
             const pairVn = extractVersionNum(pfn) ?? 2;
@@ -635,6 +650,7 @@ function buildDetectedPairCard(item, dec, epOpts, pairedFile, mode = "part") {
                 pairFilename:  pfn,
                 thisPartLabel: `ver${thisVn}`,
                 pairPartLabel: `ver${pairVn}`,
+                expectedName,
             };
         } else {
             pairedInfo = {
@@ -642,6 +658,7 @@ function buildDetectedPairCard(item, dec, epOpts, pairedFile, mode = "part") {
                 pairFilename:  pfn,
                 thisPartLabel: extractPartLabel(filename),
                 pairPartLabel: extractPartLabel(pfn),
+                expectedName,
             };
         }
         pairFilenameEncoded = encodeURIComponent(pfn);
