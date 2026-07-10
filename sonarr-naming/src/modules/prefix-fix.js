@@ -1,5 +1,5 @@
 import { RG_PREFIX_RE } from "./constants.js";
-import { splitRGToken, stripRGPrefix } from "./rg-parser.js";
+import { stripRGPrefix } from "./rg-parser.js";
 import { getSpData } from "./state.js";
 import { apiReq, waitForCommand, waitForFileUpdate } from "./api.js";
 import { fmtEp, firstEp, showToast } from "./utils.js";
@@ -18,12 +18,10 @@ import { createProgress } from "./progress-ui.js";
  *      RG="[TrueID]-AudioTH" and file is "…[TrueID]-AudioTH.mkv" → returns true.
  */
 export function prefixAlreadyInFilename(f) {
-    // A multi-part token ("part2-") sits in front of the [bracket] prefix — skip
-    // past it so tokened files are still detected.
-    const { rest } = splitRGToken(f.releaseGroup || "");
-    if (!RG_PREFIX_RE.test(rest)) return false;
+    const rg = f.releaseGroup || "";
+    if (!RG_PREFIX_RE.test(rg)) return false;
     // Full prefix e.g. "[TrueID][IQ]-" — RG_PREFIX_RE now covers multi-bracket
-    const prefix = rest.match(RG_PREFIX_RE)?.[0] ?? "";
+    const prefix = rg.match(RG_PREFIX_RE)?.[0] ?? "";
     if (!prefix) return false;
     const basename = (f.relativePath || "").split(/[/\\]/).pop();
     // Filename may have the prefix embedded after quality brackets, e.g.
@@ -71,8 +69,7 @@ export async function recheckPrefixFiles() {
 export function buildFixUI(series, affected) {
     document.getElementById("rg-fix-panel")?.remove();
 
-    const prefixes = [...new Set(affected.map(f =>
-        (splitRGToken(f.releaseGroup).rest.match(RG_PREFIX_RE) || [""])[0]))];
+    const prefixes = [...new Set(affected.map(f => (f.releaseGroup.match(RG_PREFIX_RE) || [""])[0]))];
     const prefixLabel = prefixes.join(", ");
 
     // Group by season

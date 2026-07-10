@@ -1,23 +1,42 @@
 import { NETWORKS, EDITIONS, RG_PREFIX_RE, RG_TOKEN_RE } from "./constants.js";
 
 // ── Multi-part / multi-version token ──────────────────────────────────────────
+//
+// Layout: [bracket prefix] - [partN token] - [language body]
+//   "[NF]-part1-AudioENSubTHEN"   prefix + token + body
+//   "[NF]-AudioENSubTHEN"         prefix + body
+//   "part1-AudioENSubTHEN"        token + body   (no network/edition)
+//
+// Keeping the bracket prefix in front means RG_PREFIX_RE still matches, so the
+// strip-prefix features need no token awareness at all.
 
 /**
- * Split a leading multi-part/version token off a Release Group.
- * "part2-[NF]-AudioENSubTHEN" → { token: "part2", rest: "[NF]-AudioENSubTHEN" }
- * "[NF]-AudioENSubTHEN"       → { token: null,    rest: "[NF]-AudioENSubTHEN" }
+ * Split a Release Group into its three segments.
+ * "[NF]-part2-AudioTH" → { prefix: "[NF]-", token: "part2", body: "AudioTH" }
  */
-export function splitRGToken(raw) {
-    const m = (raw ?? "").match(RG_TOKEN_RE);
-    return m ? { token: m[1].toLowerCase(), rest: raw.slice(m[0].length) }
-             : { token: null, rest: raw ?? "" };
+export function splitRG(raw) {
+    const s  = raw ?? "";
+    const pm = s.match(RG_PREFIX_RE);
+    const prefix      = pm ? pm[0] : "";
+    const afterPrefix = pm ? s.slice(pm[0].length) : s;
+    const tm = afterPrefix.match(RG_TOKEN_RE);
+    return {
+        prefix,
+        token: tm ? tm[1].toLowerCase() : null,
+        body:  tm ? afterPrefix.slice(tm[0].length) : afterPrefix,
+    };
 }
 
-/** Strip the [bracket] prefix while keeping any leading partN-/verN- token. */
+/** Strip the [bracket] prefix. The token sits after it, so it survives. */
 export function stripRGPrefix(raw) {
-    const { token, rest } = splitRGToken(raw);
-    const stripped = rest.replace(RG_PREFIX_RE, "");
-    return token ? `${token}-${stripped}` : stripped;
+    return (raw ?? "").replace(RG_PREFIX_RE, "");
+}
+
+/** Replace (or insert, or with token=null remove) the partN/verN token. */
+export function withRGToken(raw, token) {
+    const { prefix, body } = splitRG(raw);
+    if (!token) return prefix + body;
+    return body ? `${prefix}${token}-${body}` : `${prefix}${token}`;
 }
 
 // ── Parse existing Release Group ──────────────────────────────────────────────
@@ -27,19 +46,12 @@ export function parseRG(raw) {
     //   A) Multiple brackets : [TrueID][NANA][Extended]-AudioTH…   ← our output
     //   B) Space-separated   : [TrueID NANA Extended]-AudioTH…     ← Sonarr {[Custom Formats]}
     //   C) No prefix         : AudioTHZHSubTHENZH
-    // Any of these may carry a leading multi-part token: part2-[NF]-AudioTH…
+    // Any of these may carry a multi-part token after the prefix: [NF]-part2-AudioTH…
 
-    const { token, rest } = splitRGToken(raw);
-
-    // Find the end of the prefix block = last "]-" that is followed immediately
-    // by an uppercase letter (start of Audio/Sub body) or end of string.
-    // Using RG_PREFIX_RE to extract the full matched prefix, then slice the body.
-    const prefixMatch = rest.match(RG_PREFIX_RE);
-    const body = prefixMatch ? rest.slice(prefixMatch[0].length) : rest;
+    const { prefix: prefixStr, token, body } = splitRG(raw);
 
     // Collect bracket content only from the prefix region (not from body)
-    const prefixStr = prefixMatch ? prefixMatch[0] : "";
-    const brackets  = [...prefixStr.matchAll(/\[([^\]]+)\]/g)].map(m => m[1]);
+    const brackets = [...prefixStr.matchAll(/\[([^\]]+)\]/g)].map(m => m[1]);
 
     const audioM = body.match(/Audio([A-Z]{2}(?:[A-Z]{2})*)/);
     const subM   = body.match(/Sub([A-Z]{2}(?:[A-Z]{2})*)/);
@@ -66,7 +78,8 @@ export function parseRG(raw) {
 // ── Build output string ───────────────────────────────────────────────────────
 
 // networks & editions are arrays; audioCodes & subCodes are arrays of 2-char codes.
-// `token` (partN/verN) is re-attached in front so multi-part files survive a rebuild.
+// `token` (partN/verN) is placed between the bracket prefix and the language body
+// so the prefix stays in front: "[NF]-part1-AudioENSubTHEN".
 export function buildValue(networks, editions, audioCodes, subCodes, token = null) {
     const prefix = [...networks, ...editions].map(v => `[${v}]`).join("");
     const parts  = [];
@@ -74,13 +87,10 @@ export function buildValue(networks, editions, audioCodes, subCodes, token = nul
     if (subCodes.length)   parts.push(`Sub${subCodes.join("")}`);
     const lang = parts.join("");
 
-    let body;
-    if (!prefix && !lang) body = "";
-    else if (!prefix)     body = lang;
-    else                  body = `${prefix}-${lang}`;
-
-    if (!token) return body;
-    return body ? `${token}-${body}` : token;
+    const tail = [token, lang].filter(Boolean).join("-");
+    if (!prefix && !tail) return "";
+    if (!prefix) return tail;
+    return `${prefix}-${tail}`;
 }
 
 /**

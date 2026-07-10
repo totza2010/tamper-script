@@ -3,6 +3,7 @@
 import { getSpData } from "./state.js";
 import { apiReq } from "./api.js";
 import { showToast } from "./utils.js";
+import { withRGToken } from "./rg-parser.js";
 
 // ── Plex multi-part suffixes: cdX, discX, diskX, dvdX, partX, ptX ────────────
 // ref: https://support.plex.tv/articles/200220677-local-media-assets-movies/
@@ -84,21 +85,9 @@ function stripBaseToken(base, token) {
 }
 
 /**
- * Strip an existing pair prefix from a release-group string.
- * e.g. "ver2-AudioJASubTH" → "AudioJASubTH"
- *      "part2-AudioJASubTHEN" → "AudioJASubTHEN"
- */
-function stripRGToken(rg, token) {
-    const s = (rg ?? "");
-    const stripped = isVerToken(token)
-        ? s.replace(/^ver\d+-?/i, "").replace(/^-/, "")
-        : s.replace(/^(cd|disc|disk|dvd|part|pt)\d+-?/i, "").replace(/^-/, "");
-    return stripped || s;
-}
-
-/**
- * Compute a rename target by inserting "-{token}" before the release group,
- * using the Sonarr episode file as the naming template.
+ * Compute a rename target by inserting the token into the release group, using
+ * the Sonarr episode file as the naming template. The token sits after the
+ * [bracket] prefix: "[NF]-AudioTH" + "part2" → "[NF]-part2-AudioTH".
  * token examples: "pt1", "pt2", "part3", "cd2", "ver1", "ver2"
  */
 function computePairTargetName(importedFile, token) {
@@ -109,12 +98,14 @@ function computePairTargetName(importedFile, token) {
     let base   = dot >= 0 ? filename.slice(0, dot) : filename;
 
     base = stripBaseToken(base, token);
-    const baseRG = stripRGToken(importedFile.releaseGroup ?? "", token);
+    const rg     = importedFile.releaseGroup ?? "";
+    const baseRG = withRGToken(rg, null);    // any existing token removed
+    const newRG  = withRGToken(rg, token);   // token placed after the prefix
 
     if (baseRG) {
         const rgSuffix = `-${baseRG}`;
         if (base.toLowerCase().endsWith(rgSuffix.toLowerCase())) {
-            return `${base.slice(0, base.length - rgSuffix.length)}-${token}-${baseRG}${ext}`;
+            return `${base.slice(0, base.length - rgSuffix.length)}-${newRG}${ext}`;
         }
     }
     return `${base}-${token}${ext}`;
@@ -911,7 +902,7 @@ export function showUnmatchedPanel() {
         const sonarrTarget = computePairTargetName(opt.file, sonarrToken);
         if (!thisTarget || !sonarrTarget) return;
 
-        const sonarrOriginalRG = stripRGToken(opt.file.releaseGroup ?? "", sonarrToken);
+        const sonarrOriginalRG = withRGToken(opt.file.releaseGroup ?? "", null);
         const path = decodeURIComponent(card.dataset.path ?? "");
         pairPickTemp.set(path, { fileId, thisToken, sonarrToken, thisTarget, sonarrTarget, sonarrOriginalRG });
 
@@ -1072,7 +1063,7 @@ export function showUnmatchedPanel() {
 
             try {
                 const spd = getSpData();
-                const newRG = origRG ? `${token}-${origRG}` : token;
+                const newRG = origRG ? withRGToken(origRG, token) : token;
 
                 const currentFile = await apiReq("GET", `/api/v3/episodefile/${fileId}`);
                 await apiReq("PUT", `/api/v3/episodefile/${fileId}`, { ...currentFile, releaseGroup: newRG });
