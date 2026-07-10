@@ -38,23 +38,21 @@ function makeRow(labelText, rightEl) {
     return row;
 }
 
-// ── Multi-part prefix helpers ─────────────────────────────────────────────────
-// A leading "partN-" token on the Release Group (e.g. "part2-AudioENSubTHEN").
-const PART_TOKEN_RE = /^(part\d+)-/i;
+// ── Multi-part prefix picker ──────────────────────────────────────────────────
 
-/** Split a leading "partN-" token off the Release Group value. */
-function parsePartToken(raw) {
-    const m = (raw ?? "").match(PART_TOKEN_RE);
-    return m ? { token: m[1].toLowerCase(), rest: raw.slice(m[0].length) }
-             : { token: null, rest: raw ?? "" };
-}
-
-/** Single-select part picker: part1…part5, click an active pill to clear it. */
+/**
+ * Single-select part picker: part1…part5, click an active pill to clear it.
+ * A token that isn't one of the defaults (e.g. "ver2") is added as an extra
+ * pill so rebuilding the Release Group never silently drops it.
+ */
 function makePartPills(activeToken, onChange) {
     const wrap = document.createElement("div");
     wrap.className = "rg-pills";
 
-    ["part1", "part2", "part3", "part4", "part5"].forEach(tok => {
+    const tokens = ["part1", "part2", "part3", "part4", "part5"];
+    if (activeToken && !tokens.includes(activeToken)) tokens.unshift(activeToken);
+
+    tokens.forEach(tok => {
         const p = document.createElement("div");
         p.className = "rg-pill part";
         p.textContent = tok;
@@ -81,9 +79,9 @@ function inject(target) {
     const releaseInput = document.querySelector("input[name='releaseGroup']");
     if (!releaseInput) return;
 
-    // Peel off any existing "partN-" prefix so the rest parses cleanly.
-    const { token: partToken, rest: rgBody } = parsePartToken(releaseInput.value);
-    const parsed = parseRG(rgBody);
+    // parseRG peels off any leading partN-/verN- token for us.
+    const parsed    = parseRG(releaseInput.value);
+    const partToken = parsed.token;
     const container = document.createElement("div");
     container.id = "rg-container";
 
@@ -122,8 +120,7 @@ function inject(target) {
         const sub   = subComp.get();
         const part  = partComp.get();  // "part2" | null
 
-        const body  = buildValue(nets, edts, audio, sub);
-        const value = part ? (body ? `${part}-${body}` : part) : body;
+        const value = buildValue(nets, edts, audio, sub, part);
 
         preview.textContent = value || "—";
         preview.className   = !value ? "empty"

@@ -94,10 +94,9 @@ async function computeAssignments(items, parts) {
 }
 
 /** Apply episode + Release Group to every item (synchronous store dispatches). */
-function applyMapping(store, assignments, rgBody) {
+function applyMapping(store, assignments, rg) {
     for (const { item, episode, part } of assignments) {
-        const rg = rgBody ? `part${part}-${rgBody}` : `part${part}`;
-        updateItems(store, [item.id], { episodes: [episode], releaseGroup: rg });
+        updateItems(store, [item.id], { episodes: [episode], releaseGroup: rg(part) });
     }
 }
 
@@ -191,17 +190,15 @@ export function autoPairMultipart() {
     overlay.querySelector(".mpp-edt").appendChild(edtComp.el);
     overlay.querySelector(".mpp-langs").append(audioComp.el, subComp.el);
 
-    function currentBody() {
-        return buildValue(netComp.get(), edtComp.get(), audioComp.get(), subComp.get());
+    /** Release Group for a given part number, e.g. 2 → "part2-[NF]-AudioENSubTHEN" */
+    function rgForPart(part) {
+        return buildValue(netComp.get(), edtComp.get(), audioComp.get(), subComp.get(), `part${part}`);
     }
 
     function sync() {
         const parts = Math.max(1, parseInt(partsInput.value, 10) || 1);
-        const body  = currentBody();
         const lines = [];
-        for (let p = 1; p <= Math.min(parts, 6); p++) {
-            lines.push(body ? `part${p}-${body}` : `part${p}`);
-        }
+        for (let p = 1; p <= Math.min(parts, 6); p++) lines.push(rgForPart(p));
         preview.innerHTML = lines.map(l => `<div>${l}</div>`).join("");
     }
 
@@ -245,7 +242,7 @@ export function autoPairMultipart() {
 
         // Apply episode + Release Group synchronously, then close and reprocess
         // in the background so the modal never appears frozen on a slow request.
-        applyMapping(store, assignments, currentBody());
+        applyMapping(store, assignments, rgForPart);
         closeModal();
         showToast(`จับคู่ ${assignments.length} ไฟล์แล้ว — กำลัง refresh สถานะ…`);
 

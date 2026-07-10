@@ -160,3 +160,8 @@ export const APIKEY_KEY     = `sonarr_apikey_${location.hostname}`;
 // Matches one OR MORE consecutive [bracket] groups followed by "-"
 // e.g. "[TrueID]-"  "[TrueID][IQ]-"  "[TrueID][IQ][Extended]-"
 export const RG_PREFIX_RE = /^(?:\[[^\]]+\])+-/;
+
+// Matches a leading multi-part / multi-version token followed by "-"
+// e.g. "part1-[NF]-AudioENSubTHEN"  "ver2-AudioTHZHSubTH"  "pt3-…"
+// It always sits in FRONT of the [bracket] prefix, so strip it before parsing.
+export const RG_TOKEN_RE = /^((?:cd|disc|disk|dvd|part|pt|ver)\d+)-/i;

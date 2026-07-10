@@ -106,7 +106,7 @@ export function openEpRGEditor(anchorEl, file, ep = null) {
 
     function sync() {
         const nets = netComp.get(), edts = edtComp.get();
-        const val  = buildValue(nets, edts, audioComp.get(), subComp.get());
+        const val  = buildValue(nets, edts, audioComp.get(), subComp.get(), parsed.token);
         preview.textContent = val || "—";
         preview.className   = "ep-pop-preview" +
             (!val ? " empty" : nets.length || edts.length ? " has-network" : "");
@@ -129,7 +129,7 @@ export function openEpRGEditor(anchorEl, file, ep = null) {
 
     // Save — PUT → verify → unified rename check
     saveBtn.addEventListener("click", async () => {
-        const value = buildValue(netComp.get(), edtComp.get(), audioComp.get(), subComp.get());
+        const value = buildValue(netComp.get(), edtComp.get(), audioComp.get(), subComp.get(), parsed.token);
         saveBtn.disabled = true;
 
         try {

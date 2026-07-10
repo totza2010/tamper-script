@@ -1,4 +1,4 @@
-import { RG_PREFIX_RE } from "./constants.js";
+import { stripRGPrefix } from "./rg-parser.js";
 import { getSpData, setSpData } from "./state.js";
 import { apiReq } from "./api.js";
 import { firstEp, showToast } from "./utils.js";
@@ -161,7 +161,7 @@ export async function checkSeriesPage() {
             .map(f => ({
                 ...f,
                 ep: epMap.get(f.id) ?? [],
-                newReleaseGroup: (f.releaseGroup || "").replace(RG_PREFIX_RE, ""),
+                newReleaseGroup: stripRGPrefix(f.releaseGroup || ""),
             }))
             .sort((a, b) => {
                 const ae = firstEp(a.ep), be = firstEp(b.ep);
