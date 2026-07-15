@@ -124,10 +124,11 @@ export function dc(v) { return savedAirDays.includes(v) ? 'checked' : ''; }
 // count      : number of new episodes to generate.
 // Skips (startEp-1) already-aired intervals so the returned episodes carry
 // the correct calculated dates starting from `startEp`.
-export function buildManualEpisodes(startEp, count, ep1DateStr, airDays, prefix, runtime) {
+export function buildManualEpisodes(startEp, count, ep1DateStr, airDays, prefix, runtime, epsPerDay = 1) {
     const [y, m, d] = ep1DateStr.split('-').map(Number);
     let cur = new Date(y, m - 1, d);
     const useDays = airDays.length > 0;
+    const eps = Math.max(1, epsPerDay);
 
     // Snap to the first matching weekday (= episode 1's actual air day)
     if (useDays) {
@@ -149,11 +150,15 @@ export function buildManualEpisodes(startEp, count, ep1DateStr, airDays, prefix,
         }
     }
 
-    // Skip past episodes 1 … startEp-1 that were already added
-    for (let skip = 1; skip < startEp; skip++) advanceOne();
+    // Skip full air-day slots before startEp.
+    // Each slot holds `eps` episodes — all sharing the same date.
+    // e.g. epsPerDay=2, startEp=3 → 1 full slot (ep1+ep2) → advance once.
+    const fullSlotsBefore = Math.floor((startEp - 1) / eps);
+    for (let s = 0; s < fullSlotsBefore; s++) advanceOne();
 
     // Generate episodes startEp … startEp+count-1
     const episodes = [];
+    let slotPos = (startEp - 1) % eps; // position within the current slot
     for (let i = 0; i < count; i++) {
         const epNum = startEp + i;
         episodes.push({
@@ -163,7 +168,8 @@ export function buildManualEpisodes(startEp, count, ep1DateStr, airDays, prefix,
             air_date: toDateStr(cur),
             runtime,
         });
-        advanceOne();
+        slotPos++;
+        if (slotPos >= eps) { slotPos = 0; advanceOne(); }
     }
     return episodes;
 }
@@ -213,6 +219,15 @@ export function buildManualSectionHtml() {
                 <label class="tm-day-label"><input type="checkbox" class="tm-day-cb" value="6" ${dc(6)}> Sat</label>
             </div>
             <p class="tm-hint">ไม่เลือกเลย = ห่างกัน 7 วัน</p>
+        </div>
+        <div class="tm-field">
+            <label class="tm-label">
+                จำนวนตอนต่อวัน
+                <span class="tm-hint-inline">(เช่น 2 = ออก 2 ตอนในวันเดียวกัน)</span>
+            </label>
+            <input id="tm-m-epperday" type="number"
+                value="${escHtml(pget('manual_epperday', '1'))}"
+                min="1" max="20" style="width:80px">
         </div>
         <div class="tm-field">
             <label class="tm-label">Runtime (นาที, ไม่บังคับ)</label>
@@ -354,6 +369,23 @@ export function showPreview(episodes, subtitle) {
     previewOverlay.classList.add('active');
 }
 
+// Shift all episodes after `fromIdx` by the same day-delta as the moved episode.
+// Called when the user commits a new air_date in the preview table.
+// Episodes that had no date are left untouched.
+function shiftSubsequentDates(fromIdx, oldDateStr, newDateStr) {
+    if (fromIdx >= state.previewEpisodes.length - 1) return;
+    if (!oldDateStr || !newDateStr) return;
+    const delta = new Date(newDateStr + 'T00:00:00') - new Date(oldDateStr + 'T00:00:00');
+    if (!delta) return;
+    for (let i = fromIdx + 1; i < state.previewEpisodes.length; i++) {
+        const ep = state.previewEpisodes[i];
+        if (!ep.air_date) continue;
+        const d = new Date(ep.air_date + 'T00:00:00');
+        ep.air_date = toDateStr(new Date(d.getTime() + delta));
+    }
+    renderPreviewTable();
+}
+
 export function renderPreviewTable() {
     const tbody = previewPanel.querySelector('#tm-preview-body');
     tbody.innerHTML = '';
@@ -395,13 +427,24 @@ export function renderPreviewTable() {
         tr.querySelectorAll('.ep-field').forEach(inp => {
             inp.addEventListener('input', () => {
                 state.previewEpisodes[idx][inp.dataset.field] = inp.value;
-                // If user edits a field, clear the _exists flag so it won't be skipped
                 if (inp.dataset.field !== 'episode_number') {
                     state.previewEpisodes[idx]._exists = false;
                     state.previewEpisodes[idx]._diff   = false;
                     tr.classList.remove('tm-ep-exists', 'tm-ep-diff');
                 }
             });
+
+            // When air_date is committed (date picker closed / Tab out),
+            // shift all subsequent episodes by the same delta.
+            if (inp.dataset.field === 'air_date') {
+                let prevDate = ep.air_date; // captured at render time
+                inp.addEventListener('change', () => {
+                    if (inp.value && inp.value !== prevDate) {
+                        shiftSubsequentDates(idx, prevDate, inp.value);
+                        // prevDate is implicitly reset after re-render rebuilds the row
+                    }
+                });
+            }
         });
         tr.querySelectorAll('.tm-move-btn').forEach(btn => {
             btn.addEventListener('click', () => {

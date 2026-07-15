@@ -76,6 +76,7 @@ async function doManual() {
     const prefix    = configPanel.querySelector('#tm-m-prefix')?.value.trim() || 'Episode';
     const startDate = configPanel.querySelector('#tm-m-startdate')?.value;
     const runtime   = configPanel.querySelector('#tm-m-runtime')?.value.trim() || '';
+    const epsPerDay = Math.max(1, parseInt(configPanel.querySelector('#tm-m-epperday')?.value, 10) || 1);
 
     if (!totalEps || totalEps < 1) { setConfigStatus('กรุณากรอกจำนวนตอน', 'err'); return; }
     if (!startDate)                 { setConfigStatus('กรุณากรอกวันที่ออกอากาศตอนแรก', 'err'); return; }
@@ -107,13 +108,14 @@ async function doManual() {
     pset('manual_prefix',    prefix);
     pset('manual_startdate', startDate);
     pset('manual_runtime',   runtime);
+    pset('manual_epperday',  String(epsPerDay));
 
     const airDays = Array.from(configPanel.querySelectorAll('.tm-day-cb:checked'))
         .map(cb => parseInt(cb.value, 10))
         .sort((a, b) => a - b);
     pset('manual_airdays', JSON.stringify(airDays));
 
-    const episodes = buildManualEpisodes(startEpN, newEpsCount, startDate, airDays, prefix, runtime);
+    const episodes = buildManualEpisodes(startEpN, newEpsCount, startDate, airDays, prefix, runtime, epsPerDay);
 
     const rangeLabel = newEpsCount === 1
         ? `ตอน ${startEpN}`
