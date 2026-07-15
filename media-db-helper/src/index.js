@@ -44,6 +44,24 @@ configPanel.innerHTML = isTvdb ? buildTvdbPanelHtml() : buildTmdbPanelHtml();
 if (isTvdb) setupTvdbLangFetch();
 else        setupTmdbLangFetch();
 
+// ── Manual: release-mode select toggles the "N" field + hint ─────────────────
+(function wireReleaseMode() {
+    const sel  = configPanel.querySelector('#tm-m-mode');
+    const wrap = configPanel.querySelector('#tm-m-perday-wrap');
+    const hint = configPanel.querySelector('#tm-m-perday-hint');
+    if (!sel || !wrap) return;
+    const sync = () => {
+        const m = sel.value;
+        wrap.style.display = m === 'normal' ? 'none' : '';
+        if (hint) hint.textContent =
+            m === 'everyN' ? '(ออก N ตอนในทุกวันออกอากาศ)'
+          : m === 'firstN' ? '(เฉพาะ N ตอนแรกออกวันเดียวกัน)'
+          : '';
+    };
+    sel.addEventListener('change', sync);
+    sync();
+})();
+
 // ── Tab switching ─────────────────────────────────────────────────────────────
 configPanel.querySelectorAll('.tm-tab').forEach(tab => {
     tab.addEventListener('click', () => {
@@ -76,7 +94,8 @@ async function doManual() {
     const prefix    = configPanel.querySelector('#tm-m-prefix')?.value.trim() || 'Episode';
     const startDate = configPanel.querySelector('#tm-m-startdate')?.value;
     const runtime   = configPanel.querySelector('#tm-m-runtime')?.value.trim() || '';
-    const epsPerDay = Math.max(1, parseInt(configPanel.querySelector('#tm-m-epperday')?.value, 10) || 1);
+    const mode      = configPanel.querySelector('#tm-m-mode')?.value || 'normal';
+    const perDay    = Math.max(2, parseInt(configPanel.querySelector('#tm-m-epperday')?.value, 10) || 2);
 
     if (!totalEps || totalEps < 1) { setConfigStatus('กรุณากรอกจำนวนตอน', 'err'); return; }
     if (!startDate)                 { setConfigStatus('กรุณากรอกวันที่ออกอากาศตอนแรก', 'err'); return; }
@@ -108,14 +127,17 @@ async function doManual() {
     pset('manual_prefix',    prefix);
     pset('manual_startdate', startDate);
     pset('manual_runtime',   runtime);
-    pset('manual_epperday',  String(epsPerDay));
+    pset('manual_mode',      mode);
+    pset('manual_epperday',  String(perDay));
 
     const airDays = Array.from(configPanel.querySelectorAll('.tm-day-cb:checked'))
         .map(cb => parseInt(cb.value, 10))
         .sort((a, b) => a - b);
     pset('manual_airdays', JSON.stringify(airDays));
 
-    const episodes = buildManualEpisodes(startEpN, newEpsCount, startDate, airDays, prefix, runtime, epsPerDay);
+    // normal = one episode per air day (everyN with N=1)
+    const opts = mode === 'normal' ? { mode: 'everyN', perDay: 1 } : { mode, perDay };
+    const episodes = buildManualEpisodes(startEpN, newEpsCount, startDate, airDays, prefix, runtime, opts);
 
     const rangeLabel = newEpsCount === 1
         ? `ตอน ${startEpN}`

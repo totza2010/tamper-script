@@ -119,16 +119,31 @@ export const savedStartDate = pget('manual_startdate', new Date().toISOString().
 /** Returns "checked" if the given weekday index was previously saved. */
 export function dc(v) { return savedAirDays.includes(v) ? 'checked' : ''; }
 
+/** Returns "selected" if the given release mode was previously saved. */
+export function md(m) { return pget('manual_mode', 'normal') === m ? 'selected' : ''; }
+
 // ── Episode date calculator ───────────────────────────────────────────────────
 // ep1DateStr : air date of episode 1 (the very first episode of the season).
 // count      : number of new episodes to generate.
 // Skips (startEp-1) already-aired intervals so the returned episodes carry
 // the correct calculated dates starting from `startEp`.
-export function buildManualEpisodes(startEp, count, ep1DateStr, airDays, prefix, runtime, epsPerDay = 1) {
+// Which air-day "slot" (0-based) an episode belongs to, given the release mode.
+// A slot = one air date. All episodes in the same slot share that date.
+//   everyN : every slot holds N episodes → slot = floor((ep-1)/n)
+//   firstN : only slot 0 holds N episodes, the rest hold 1 → ep≤N ⇒ 0, else ep-N
+//   normal : one per slot (= everyN with n=1)
+export function episodeSlot(epNum, mode, n) {
+    if (mode === 'firstN') return epNum <= n ? 0 : epNum - n;
+    return Math.floor((epNum - 1) / Math.max(1, n)); // everyN / normal
+}
+
+// opts: { mode: 'normal'|'everyN'|'firstN', perDay: N }
+export function buildManualEpisodes(startEp, count, ep1DateStr, airDays, prefix, runtime, opts = {}) {
+    const mode = opts.mode || 'normal';
+    const n    = Math.max(1, opts.perDay || 1);
     const [y, m, d] = ep1DateStr.split('-').map(Number);
     let cur = new Date(y, m - 1, d);
     const useDays = airDays.length > 0;
-    const eps = Math.max(1, epsPerDay);
 
     // Snap to the first matching weekday (= episode 1's actual air day)
     if (useDays) {
@@ -150,17 +165,17 @@ export function buildManualEpisodes(startEp, count, ep1DateStr, airDays, prefix,
         }
     }
 
-    // Skip full air-day slots before startEp.
-    // Each slot holds `eps` episodes — all sharing the same date.
-    // e.g. epsPerDay=2, startEp=3 → 1 full slot (ep1+ep2) → advance once.
-    const fullSlotsBefore = Math.floor((startEp - 1) / eps);
-    for (let s = 0; s < fullSlotsBefore; s++) advanceOne();
+    // Advance the date to the slot that `startEp` belongs to
+    let curSlot = episodeSlot(startEp, mode, n);
+    for (let s = 0; s < curSlot; s++) advanceOne();
 
-    // Generate episodes startEp … startEp+count-1
+    // Generate episodes startEp … startEp+count-1, advancing the date only
+    // when we cross into a new slot (episodes in the same slot keep one date).
     const episodes = [];
-    let slotPos = (startEp - 1) % eps; // position within the current slot
     for (let i = 0; i < count; i++) {
-        const epNum = startEp + i;
+        const epNum   = startEp + i;
+        const epSlot  = episodeSlot(epNum, mode, n);
+        while (epSlot > curSlot) { advanceOne(); curSlot++; }
         episodes.push({
             episode_number: epNum,
             name:     `${prefix} ${epNum}`,
@@ -168,8 +183,6 @@ export function buildManualEpisodes(startEp, count, ep1DateStr, airDays, prefix,
             air_date: toDateStr(cur),
             runtime,
         });
-        slotPos++;
-        if (slotPos >= eps) { slotPos = 0; advanceOne(); }
     }
     return episodes;
 }
@@ -221,13 +234,22 @@ export function buildManualSectionHtml() {
             <p class="tm-hint">ไม่เลือกเลย = ห่างกัน 7 วัน</p>
         </div>
         <div class="tm-field">
+            <label class="tm-label">รูปแบบการออกอากาศ</label>
+            <select id="tm-m-mode">
+                <option value="normal" ${md('normal')}>1 ตอน / วัน (ปกติ)</option>
+                <option value="everyN" ${md('everyN')}>หลายตอน / วัน (ทุกวัน)</option>
+                <option value="firstN" ${md('firstN')}>N ตอนแรกออกวันเดียวกัน (ที่เหลือ 1 ตอน/วัน)</option>
+            </select>
+        </div>
+        <div class="tm-field" id="tm-m-perday-wrap"
+            style="${pget('manual_mode', 'normal') === 'normal' ? 'display:none' : ''}">
             <label class="tm-label">
-                จำนวนตอนต่อวัน
-                <span class="tm-hint-inline">(เช่น 2 = ออก 2 ตอนในวันเดียวกัน)</span>
+                จำนวนตอน (N)
+                <span class="tm-hint-inline" id="tm-m-perday-hint"></span>
             </label>
             <input id="tm-m-epperday" type="number"
-                value="${escHtml(pget('manual_epperday', '1'))}"
-                min="1" max="20" style="width:80px">
+                value="${escHtml(pget('manual_epperday', '2'))}"
+                min="2" max="20" style="width:80px">
         </div>
         <div class="tm-field">
             <label class="tm-label">Runtime (นาที, ไม่บังคับ)</label>
@@ -369,20 +391,84 @@ export function showPreview(episodes, subtitle) {
     previewOverlay.classList.add('active');
 }
 
-// Shift all episodes after `fromIdx` by the same day-delta as the moved episode.
-// Called when the user commits a new air_date in the preview table.
-// Episodes that had no date are left untouched.
-function shiftSubsequentDates(fromIdx, oldDateStr, newDateStr) {
-    if (fromIdx >= state.previewEpisodes.length - 1) return;
-    if (!oldDateStr || !newDateStr) return;
-    const delta = new Date(newDateStr + 'T00:00:00') - new Date(oldDateStr + 'T00:00:00');
-    if (!delta) return;
-    for (let i = fromIdx + 1; i < state.previewEpisodes.length; i++) {
-        const ep = state.previewEpisodes[i];
-        if (!ep.air_date) continue;
-        const d = new Date(ep.air_date + 'T00:00:00');
-        ep.air_date = toDateStr(new Date(d.getTime() + delta));
+// Infer the air-day pattern (weekday set) from the current preview dates.
+// Manual-generated episodes already sit on their air days, so this recovers
+// the [Mon,Wed,…] pattern even for API-fetched episodes with no config.
+function inferAirDays() {
+    const set = new Set();
+    state.previewEpisodes.forEach(e => {
+        if (e.air_date) set.add(new Date(e.air_date + 'T00:00:00').getDay());
+    });
+    return [...set].sort((a, b) => a - b);
+}
+
+// Next air-day strictly after dateStr, following the weekday pattern.
+// Empty pattern → +7 days.
+export function nextAirDay(dateStr, airDays) {
+    const cur = new Date(dateStr + 'T00:00:00');
+    if (!airDays || !airDays.length) { cur.setDate(cur.getDate() + 7); return toDateStr(cur); }
+    const days = [...airDays].sort((a, b) => a - b);
+    const dow  = cur.getDay();
+    const pos  = days.indexOf(dow);
+    let add;
+    if (pos === -1) {
+        const nx = days.find(d => d > dow);
+        add = nx != null ? nx - dow : 7 - dow + days[0];
+    } else if (pos + 1 < days.length) {
+        add = days[pos + 1] - dow;
+    } else {
+        add = 7 - dow + days[0];
     }
+    cur.setDate(cur.getDate() + add);
+    return toDateStr(cur);
+}
+
+// Previous air-day strictly before dateStr. Empty pattern → −7 days.
+export function prevAirDay(dateStr, airDays) {
+    const cur = new Date(dateStr + 'T00:00:00');
+    if (!airDays || !airDays.length) { cur.setDate(cur.getDate() - 7); return toDateStr(cur); }
+    const days = [...airDays].sort((a, b) => a - b);
+    const dow  = cur.getDay();
+    const pos  = days.indexOf(dow);
+    let sub;
+    if (pos === -1) {
+        const pv = [...days].reverse().find(d => d < dow);
+        sub = pv != null ? dow - pv : dow + (7 - days[days.length - 1]);
+    } else if (pos - 1 >= 0) {
+        sub = dow - days[pos - 1];
+    } else {
+        sub = dow + (7 - days[days.length - 1]);
+    }
+    cur.setDate(cur.getDate() - sub);
+    return toDateStr(cur);
+}
+
+// After episode `idx` gets a new date, re-derive every later episode's date
+// by walking the air-day pattern forward. `orig` = the dates BEFORE the change,
+// used to keep same-day groupings intact (e.g. EP1+EP2 released together).
+function rederiveDatesFrom(idx, orig) {
+    const eps = state.previewEpisodes;
+    const air = inferAirDays();
+    for (let i = idx + 1; i < eps.length; i++) {
+        if (!orig[i]) continue;
+        eps[i].air_date = (orig[i] === orig[i - 1])
+            ? eps[i - 1].air_date                        // grouped: same day as predecessor
+            : nextAirDay(eps[i - 1].air_date, air);      // next slot in the pattern
+    }
+}
+
+// Shift episode `idx` (and all later ones) one air-day slot forward/back.
+function shiftAirDaySlot(idx, dir) {
+    syncFieldsFromDOM();
+    const eps = state.previewEpisodes;
+    const ep  = eps[idx];
+    if (!ep?.air_date) return;
+    const orig = eps.map(e => e.air_date);
+    const air  = inferAirDays();
+    ep.air_date = dir === 'later'
+        ? nextAirDay(ep.air_date, air)
+        : prevAirDay(ep.air_date, air);
+    rederiveDatesFrom(idx, orig);
     renderPreviewTable();
 }
 
@@ -416,7 +502,15 @@ export function renderPreviewTable() {
                 value="${escHtml(ep.name)}" maxlength="100"></td>
             <td><textarea class="ep-field" data-field="overview"
                 rows="2" maxlength="1000">${escHtml(ep.overview)}</textarea></td>
-            <td><input type="date" class="ep-field" data-field="air_date" value="${ep.air_date}"></td>
+            <td>
+                <div style="display:flex;align-items:center;gap:3px">
+                    <input type="date" class="ep-field" data-field="air_date" value="${ep.air_date}" style="flex:1">
+                    <button class="tm-shift-btn" data-shift="earlier"
+                        title="เลื่อนขึ้น 1 รอบออกอากาศ (ตอนนี้และตอนถัดไป)">⏮</button>
+                    <button class="tm-shift-btn" data-shift="later"
+                        title="เลื่อนลง 1 รอบออกอากาศ เช่น งดสัปดาห์นี้ (ตอนนี้และตอนถัดไป)">⏭</button>
+                </div>
+            </td>
             <td><input type="number" class="ep-field" data-field="runtime"
                 value="${ep.runtime}" min="0" style="width:60px"></td>
             <td style="white-space:nowrap">
@@ -435,16 +529,24 @@ export function renderPreviewTable() {
             });
 
             // When air_date is committed (date picker closed / Tab out),
-            // shift all subsequent episodes by the same delta.
+            // re-derive all subsequent episodes to follow the air-day pattern
+            // from the new date, preserving same-day groupings.
             if (inp.dataset.field === 'air_date') {
-                let prevDate = ep.air_date; // captured at render time
+                const prevDate = ep.air_date; // captured at render time
                 inp.addEventListener('change', () => {
                     if (inp.value && inp.value !== prevDate) {
-                        shiftSubsequentDates(idx, prevDate, inp.value);
-                        // prevDate is implicitly reset after re-render rebuilds the row
+                        const orig = state.previewEpisodes.map(e => e.air_date);
+                        orig[idx] = prevDate; // restore pre-edit value for grouping check
+                        state.previewEpisodes[idx].air_date = inp.value;
+                        rederiveDatesFrom(idx, orig);
+                        renderPreviewTable();
                     }
                 });
             }
+        });
+
+        tr.querySelectorAll('.tm-shift-btn').forEach(btn => {
+            btn.addEventListener('click', () => shiftAirDaySlot(idx, btn.dataset.shift));
         });
         tr.querySelectorAll('.tm-move-btn').forEach(btn => {
             btn.addEventListener('click', () => {

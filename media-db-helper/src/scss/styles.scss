@@ -297,6 +297,20 @@ $color-green: #01d277;
     &:disabled { opacity: 0.3; cursor: default; }
 }
 
+.tm-shift-btn {
+    background: #2a3a4e;
+    color: #7ac;
+    border: 1px solid #3a4a5e;
+    border-radius: 3px;
+    cursor: pointer;
+    padding: 2px 4px;
+    font-size: 11px;
+    line-height: 1;
+    flex-shrink: 0;
+
+    &:hover { background: #3a5a7a; color: #fff; }
+}
+
 .ep-num-cell {
     text-align: center;
     color: $color-blue;
