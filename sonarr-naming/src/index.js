@@ -7,9 +7,9 @@ import { NETWORKS, EDITIONS } from "./modules/constants.js";
 import { applySavedNetworks } from "./modules/settings.js";
 import { injectEpEditBtns } from "./modules/ep-editor.js";
 import { initFABs, watchNavigation } from "./modules/series-page.js";
-import { makeMultiPills, makeLangPicker, makePartPills } from "./modules/pickers.js";
+import { makeMultiPills, makeLangPicker } from "./modules/pickers.js";
 import { parseRG, buildValue } from "./modules/rg-parser.js";
-import { autoPairMultipart } from "./modules/multipart-import.js";
+import { autoPairMultipart, multipartFileCount, applyAutoPartRelease } from "./modules/multipart-import.js";
 
 // ── Apply saved settings ──────────────────────────────────────────────────────
 applySavedNetworks();
@@ -48,7 +48,6 @@ function inject(target) {
 
     // parseRG peels off any leading partN-/verN- token for us.
     const parsed    = parseRG(releaseInput.value);
-    const partToken = parsed.token;
     const container = document.createElement("div");
     container.id = "rg-container";
 
@@ -68,14 +67,29 @@ function inject(target) {
     dual.append(audioComp.el, subComp.el);
     container.appendChild(makeRow("Language", dual));
 
-    // Multi-part (single-select prefix — partN-)
-    const partComp = makePartPills(partToken, sync);
-    container.appendChild(makeRow("Multi-part", partComp.el));
-
     // Preview
     const preview = document.createElement("div");
     preview.id = "rg-preview";
     container.appendChild(makeRow("Preview", preview));
+
+    // Auto-part — appears only when the import has files sharing an episode.
+    // Sonarr's Set Release Group applies one value to all selected files, so it
+    // can't give each part a different token; this button writes them per file.
+    const dupCount = multipartFileCount();
+    if (dupCount > 0) {
+        const partBtn = document.createElement("button");
+        partBtn.id = "rg-autopart-btn";
+        partBtn.textContent = `🔗 ตั้ง Release Group + partN ให้ไฟล์ multi-part (${dupCount} ไฟล์)`;
+        partBtn.addEventListener("click", () => {
+            const base = releaseInput.value;
+            partBtn.disabled = true;
+            const n = applyAutoPartRelease(base);   // shows its own toast
+            if (n <= 0) { partBtn.disabled = false; return; }
+            // Close Sonarr's modal so its own Set button can't overwrite our tokens.
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        });
+        container.appendChild(makeRow("", partBtn));
+    }
 
     target.prepend(container);
 
@@ -85,9 +99,8 @@ function inject(target) {
         const edts  = edtComp.get();   // string[]
         const audio = audioComp.get();
         const sub   = subComp.get();
-        const part  = partComp.get();  // "part2" | null
 
-        const value = buildValue(nets, edts, audio, sub, part);
+        const value = buildValue(nets, edts, audio, sub);
 
         preview.textContent = value || "—";
         preview.className   = !value ? "empty"

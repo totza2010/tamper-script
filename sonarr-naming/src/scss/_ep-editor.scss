@@ -295,6 +295,23 @@
     &.empty       { color: #444; font-style: italic; }
 }
 
+// ── Auto-part button (multi-part files in Interactive Import) ─────────────────
+#rg-autopart-btn {
+    width: 100%;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid #58a;
+    background: #0a1420;
+    color: #8be;
+    font-size: 13px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all .14s;
+
+    &:hover:not(:disabled) { border-color: #6af; color: #adf; background: #12213a; }
+    &:disabled { opacity: .5; cursor: default; }
+}
+
 // ── FAB buttons ───────────────────────────────────────────────────────────────
 .rg-fab-side {
     position: fixed;
