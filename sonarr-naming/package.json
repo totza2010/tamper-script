@@ -5,7 +5,9 @@
   "scripts": {
     "dev": "webpack --mode=development --watch",
     "build": "webpack --mode=production",
-    "build:dev": "webpack --mode=development"
+    "build:dev": "webpack --mode=development",
+    "serve": "node serve.mjs",
+    "test:local": "webpack --mode=production && node serve.mjs"
   },
   "devDependencies": {
     "@babel/core": "^7.23.0",
