@@ -1,4 +1,15 @@
-import { NETWORKS, EDITIONS, RG_PREFIX_RE, RG_TOKEN_RE } from "./constants.js";
+import { NETWORKS, EDITIONS, RG_PREFIX_RE, RG_TOKEN_RE, LANG_PINNED } from "./constants.js";
+
+/**
+ * Pin the primary languages (TH, EN) to the front regardless of pick order,
+ * keeping every other selected language in the order it was chosen. Nothing is
+ * dropped — this is ordering only. e.g. ["TH","TL","EN"] → ["TH","EN","TL"].
+ */
+function orderLangCodes(codes) {
+    const head = LANG_PINNED.filter(c => codes.includes(c));
+    const tail = codes.filter(c => !LANG_PINNED.includes(c));
+    return [...head, ...tail];
+}
 
 // ── Multi-part / multi-version token ──────────────────────────────────────────
 //
@@ -43,18 +54,36 @@ export function withRGToken(raw, token) {
 
 export function parseRG(raw) {
     // Supported prefix formats (both produced by Sonarr or by this script):
-    //   A) Multiple brackets : [TrueID][NANA][Extended]-AudioTH…   ← our output
-    //   B) Space-separated   : [TrueID NANA Extended]-AudioTH…     ← Sonarr {[Custom Formats]}
-    //   C) No prefix         : AudioTHZHSubTHENZH
-    // Any of these may carry a multi-part token after the prefix: [NF]-part2-AudioTH…
+    //   A) Multiple brackets : [TrueID][NANA][Extended]-…   ← our output
+    //   B) Space-separated   : [TrueID NANA Extended]-…     ← Sonarr {[Custom Formats]}
+    //   C) No prefix         : …
+    // Any of these may carry a multi-part token after the prefix: [NF]-part2-…
+    //
+    // The language body comes in two encodings, both read here:
+    //   new : "THENJA.THEN"        audio.sub — the {.[Release Group]} token wraps
+    //                              it in [] in the filename
+    //   old : "AudioTHENJASubTHEN" AudioXX…SubYY…
 
     const { prefix: prefixStr, token, body } = splitRG(raw);
 
     // Collect bracket content only from the prefix region (not from body)
     const brackets = [...prefixStr.matchAll(/\[([^\]]+)\]/g)].map(m => m[1]);
 
-    const audioM = body.match(/Audio([A-Z]{2}(?:[A-Z]{2})*)/);
-    const subM   = body.match(/Sub([A-Z]{2}(?:[A-Z]{2})*)/);
+    let audioCodes = [], subCodes = [];
+    if (/Audio|Sub/.test(body)) {
+        // Old encoding — keyed by the literal "Audio"/"Sub" markers.
+        const audioM = body.match(/Audio([A-Z]{2}(?:[A-Z]{2})*)/);
+        const subM   = body.match(/Sub([A-Z]{2}(?:[A-Z]{2})*)/);
+        audioCodes = audioM ? (audioM[1].match(/.{2}/g) ?? []) : [];
+        subCodes   = subM   ? (subM[1].match(/.{2}/g)  ?? []) : [];
+    } else if (body) {
+        // New encoding — "<audio>.<sub>", either side may be empty (".THEN").
+        const dot = body.indexOf(".");
+        const audioStr = dot >= 0 ? body.slice(0, dot) : body;
+        const subStr   = dot >= 0 ? body.slice(dot + 1) : "";
+        audioCodes = audioStr.match(/[A-Z]{2}/g) ?? [];
+        subCodes   = subStr.match(/[A-Z]{2}/g)   ?? [];
+    }
 
     // Expand each bracket entry: split on spaces to handle format B
     // e.g. "TrueID NANA Extended" → ["TrueID","NANA","Extended"]
@@ -70,22 +99,27 @@ export function parseRG(raw) {
         token,      // e.g. "part2" | "ver1" | null
         networks,   // e.g. ["TrueID","NANA"]
         editions,   // e.g. ["Extended"]
-        audioCodes: audioM ? (audioM[1].match(/.{2}/g) ?? []) : [],
-        subCodes:   subM   ? (subM[1].match(/.{2}/g)  ?? []) : [],
+        audioCodes, // e.g. ["TH","EN","JA"]
+        subCodes,   // e.g. ["TH","EN"]
     };
 }
 
 // ── Build output string ───────────────────────────────────────────────────────
 
 // networks & editions are arrays; audioCodes & subCodes are arrays of 2-char codes.
+// Language body is the new "<audio>.<sub>" encoding (e.g. "THENJA.THEN"); the
+// {.[Release Group]} naming token wraps it in [] in the filename.
 // `token` (partN/verN) is placed between the bracket prefix and the language body
-// so the prefix stays in front: "[NF]-part1-AudioENSubTHEN".
+// so the prefix stays in front: "[NF]-part1-THENJA.THEN".
 export function buildValue(networks, editions, audioCodes, subCodes, token = null) {
     const prefix = [...networks, ...editions].map(v => `[${v}]`).join("");
-    const parts  = [];
-    if (audioCodes.length) parts.push(`Audio${audioCodes.join("")}`);
-    if (subCodes.length)   parts.push(`Sub${subCodes.join("")}`);
-    const lang = parts.join("");
+
+    // Subtitles never appear without audio, so a body is either "<audio>" or
+    // "<audio>.<sub>" — no leading-dot / sub-only form. Primary languages
+    // (TH, EN) are pinned to the front regardless of the order they were picked.
+    const audio = orderLangCodes(audioCodes).join("");
+    const sub   = orderLangCodes(subCodes).join("");
+    const lang  = audio ? (sub ? `${audio}.${sub}` : audio) : "";
 
     const tail = [token, lang].filter(Boolean).join("-");
     if (!prefix && !tail) return "";
@@ -94,9 +128,10 @@ export function buildValue(networks, editions, audioCodes, subCodes, token = nul
 }
 
 /**
- * Returns true if this file needs an RG suggestion:
- * releaseGroup is empty OR does not contain "Audio".
+ * Returns true if this file needs an RG suggestion: no audio/sub language is
+ * present in the Release Group (either encoding).
  */
 export function needsRGSuggestion(file) {
-    return !(file.releaseGroup ?? "").includes("Audio");
+    const p = parseRG(file.releaseGroup ?? "");
+    return p.audioCodes.length === 0 && p.subCodes.length === 0;
 }
