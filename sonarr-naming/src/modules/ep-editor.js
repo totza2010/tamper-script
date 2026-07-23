@@ -1,9 +1,10 @@
-import { NETWORKS, EDITIONS } from "./constants.js";
+import { NETWORKS, EDITIONS, MAX_LANG } from "./constants.js";
 import { getSpData, setSpData, isRefetching, setRefetching } from "./state.js";
 import { apiReq } from "./api.js";
 import { fmtEp, firstEp } from "./utils.js";
 import { parseRG, buildValue } from "./rg-parser.js";
-import { makeMultiPills, makeLangPicker, makePartPills } from "./pickers.js";
+import { makeSelect2, makePartPills } from "./pickers.js";
+import { sortedLangs } from "./lang.js";
 import { checkRenameMismatch } from "./rename.js";
 
 // ── Per-episode Release Group editor ─────────────────────────────────────────
@@ -16,121 +17,76 @@ import { checkRenameMismatch } from "./rename.js";
 export function openEpRGEditor(anchorEl, file, ep = null) {
     document.getElementById("ep-rg-popup")?.remove();
 
-    const parsed = parseRG(file.releaseGroup || "");
-    const popup  = document.createElement("div");
-    popup.id     = "ep-rg-popup";
-
-    // Position — prefer below the button; flip above if insufficient room.
-    // max-height is set dynamically so overflow-y: auto always has a constrained box to scroll within.
-    const rect   = anchorEl.getBoundingClientRect();
-    const MARGIN = 10;
-    const spaceBelow = window.innerHeight - rect.bottom - MARGIN;
-    const spaceAbove = rect.top - MARGIN;
-    let topPx, maxH;
-    if (spaceBelow >= 220 || spaceBelow >= spaceAbove) {
-        // Open downward
-        topPx = rect.bottom + 6;
-        maxH  = spaceBelow - 6;
-    } else {
-        // Open upward — estimate height then anchor bottom to button top
-        const estimatedH = Math.min(560, spaceAbove);
-        topPx = Math.max(MARGIN, rect.top - estimatedH - 6);
-        maxH  = spaceAbove - 6;
-    }
-    popup.style.top       = `${Math.max(MARGIN, topPx)}px`;
-    popup.style.maxHeight = `${Math.max(180, maxH)}px`;
-    popup.style.left      = `${Math.max(4, Math.min(rect.left, window.innerWidth - 434))}px`;
-
-    // Header
-    const head = document.createElement("div");
-    head.className = "ep-pop-head";
-    head.innerHTML = `✎ Edit Release Group <span class="ep-pop-close">✕</span>`;
-    popup.appendChild(head);
-
-    // Episode info box (for re-verification)
+    const parsed  = parseRG(file.releaseGroup || "");
     const epLabel = ep ? fmtEp(ep) : "";
     const epTitle = ep?.title ?? "";
     const fname   = file.relativePath?.split(/[/\\]/).pop() ?? "";
-    if (epLabel || fname) {
-        const info = document.createElement("div");
-        info.className = "ep-pop-epinfo";
-        info.innerHTML = `
-            ${epLabel ? `<div class="ep-pop-epinfo-label">${epLabel}${epTitle ? ` — ${epTitle}` : ""}</div>` : ""}
-            ${fname   ? `<div class="ep-pop-epinfo-path">${fname}</div>` : ""}
-            <div class="ep-pop-epinfo-rg">Current RG: <code>${file.releaseGroup || "(none)"}</code></div>`;
-        popup.appendChild(info);
-    }
 
-    // Network (multi-select)
-    const netRow = makeEpPopRow("Network");
-    const netComp = makeMultiPills(NETWORKS, "net", parsed.networks, sync);
-    netRow.appendChild(netComp.el);
-
-    // Edition (multi-select)
-    const edtRow = makeEpPopRow("Edition");
-    const edtComp = makeMultiPills(EDITIONS, "edt", parsed.editions, sync);
-    edtRow.appendChild(edtComp.el);
-
-    // Language (dual)
-    const langRow = makeEpPopRow("Language");
-    const dual = document.createElement("div"); dual.className = "rg-dual";
-    const audioComp = makeLangPicker("Audio",    parsed.audioCodes, sync);
-    const subComp   = makeLangPicker("Subtitle", parsed.subCodes,   sync);
-    dual.append(audioComp.el, subComp.el);
-    langRow.appendChild(dual);
-
-    // Multi-part (single-select token, sits after the [bracket] prefix)
-    const partRow = makeEpPopRow("Multi-part");
-    const partComp = makePartPills(parsed.token, sync);
-    partRow.appendChild(partComp.el);
-
-    // Preview
-    const prevRow = makeEpPopRow("Preview");
-    const preview = document.createElement("div");
-    preview.className = "ep-pop-preview empty";
-    preview.textContent = "—";
-    prevRow.appendChild(preview);
-
-    // Buttons
-    const btns      = document.createElement("div"); btns.className = "ep-pop-btns";
-    const cancelBtn = document.createElement("button");
-    cancelBtn.className = "ep-pop-btn ep-pop-cancel"; cancelBtn.textContent = "Cancel";
-    const saveBtn   = document.createElement("button");
-    saveBtn.className   = "ep-pop-btn ep-pop-save";   saveBtn.textContent   = "Save";
-    btns.append(cancelBtn, saveBtn);
-
-    popup.append(netRow, edtRow, langRow, partRow, prevRow, btns);
+    const popup = document.createElement("div");
+    popup.id = "ep-rg-popup";
+    popup.className = "rgm-overlay";
+    popup.innerHTML = `
+        <div class="rgm-modal ep-rg-modal">
+            <div class="rgm-head">
+                <span class="rgm-title">✎ Edit Release Group</span>
+                <span class="rgm-close">✕</span>
+            </div>
+            <div class="ep-rg-body">
+                <div class="rgm-info">
+                    ${epLabel ? `<div class="rgm-info-label">${epLabel}${epTitle ? ` — ${epTitle}` : ""}</div>` : ""}
+                    ${fname   ? `<div class="rgm-info-path">${fname}</div>` : ""}
+                    <div class="rgm-info-rg">Current RG: <code>${file.releaseGroup || "(none)"}</code></div>
+                </div>
+                <div class="rgm-picker-box" id="ep-picker-box"></div>
+                <div class="rgm-section-lbl">Preview</div>
+                <div id="ep-preview" class="rgm-preview empty">—</div>
+            </div>
+            <div class="rgm-footer">
+                <button class="rgm-btn rgm-btn--ghost" id="ep-cancel">Cancel</button>
+                <button class="rgm-btn rgm-btn--primary" id="ep-save">Save</button>
+            </div>
+        </div>`;
     document.body.appendChild(popup);
+    requestAnimationFrame(() => popup.classList.add("open"));
 
-    function makeEpPopRow(label) {
-        const row = document.createElement("div"); row.className = "ep-pop-row";
-        const lbl = document.createElement("div"); lbl.className = "ep-pop-lbl"; lbl.textContent = label;
-        row.appendChild(lbl);
-        return row;
-    }
+    const pickerBox = popup.querySelector("#ep-picker-box");
+    const preview   = popup.querySelector("#ep-preview");
+    const saveBtn   = popup.querySelector("#ep-save");
+    const cancelBtn = popup.querySelector("#ep-cancel");
+
+    const mkField = (label, comp) => {
+        const f = document.createElement("div"); f.className = "rgm-field";
+        const l = document.createElement("div"); l.className = "rgm-sub-lbl"; l.textContent = label;
+        f.append(l, comp.el);
+        return f;
+    };
+
+    const netComp   = makeSelect2(NETWORKS, parsed.networks, sync, "network");
+    const edtComp   = makeSelect2(EDITIONS, parsed.editions, sync, "edition");
+    const audioComp = makeSelect2(sortedLangs(), parsed.audioCodes, sync, "audio", MAX_LANG);
+    const subComp   = makeSelect2(sortedLangs(), parsed.subCodes,   sync, "sub",   MAX_LANG);
+    const partComp  = makePartPills(parsed.token, sync);
+
+    const langRow = document.createElement("div"); langRow.className = "rgm-lang-row";
+    langRow.append(mkField("Audio", audioComp), mkField("Subtitle", subComp));
+    pickerBox.append(mkField("Network", netComp), mkField("Edition", edtComp), langRow, mkField("Multi-part", partComp));
 
     function sync() {
         const nets = netComp.get(), edts = edtComp.get();
         const val  = buildValue(nets, edts, audioComp.get(), subComp.get(), partComp.get());
         preview.textContent = val || "—";
-        preview.className   = "ep-pop-preview" +
+        preview.className   = "rgm-preview" +
             (!val ? " empty" : nets.length || edts.length ? " has-network" : "");
     }
     sync();
 
-    const close = () => popup.remove();
-    head.querySelector(".ep-pop-close").addEventListener("click", close);
+    const close = () => { popup.remove(); document.removeEventListener("keydown", onKey); };
+    const onKey = e => { if (e.key === "Escape") close(); };
+    document.addEventListener("keydown", onKey);
+    popup.querySelector(".rgm-close").addEventListener("click", close);
     cancelBtn.addEventListener("click", close);
-
-    // Close on outside click
-    setTimeout(() => {
-        document.addEventListener("mousedown", function outside(e) {
-            if (!popup.contains(e.target)) {
-                popup.remove();
-                document.removeEventListener("mousedown", outside, true);
-            }
-        }, true);
-    }, 0);
+    // Backdrop blocks page clicks but does not close — prevents accidental dismiss
+    popup.addEventListener("mousedown", e => { if (e.target === popup) { e.preventDefault(); e.stopPropagation(); } });
 
     // Save — PUT → verify → unified rename check
     saveBtn.addEventListener("click", async () => {
@@ -161,7 +117,7 @@ export function openEpRGEditor(anchorEl, file, ep = null) {
                 if (idx !== -1) _spData.files[idx] = fresh;
             }
 
-            popup.remove();
+            close();
 
             // 5a. Immediately update the Release Group cell text in the DOM.
             //     React may not re-render until Sonarr gets a SignalR push, so we patch

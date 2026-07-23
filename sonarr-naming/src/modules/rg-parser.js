@@ -13,17 +13,33 @@ function orderLangCodes(codes) {
 
 // ── Multi-part / multi-version token ──────────────────────────────────────────
 //
-// Layout: [bracket prefix] - [partN token] - [language body]
-//   "[NF]-part1-AudioENSubTHEN"   prefix + token + body
-//   "[NF]-AudioENSubTHEN"         prefix + body
-//   "part1-AudioENSubTHEN"        token + body   (no network/edition)
+// The multi-part / multi-version indicator is now a BRACKET entry, exactly like
+// a network — "[PT1]" / "[V1]" — so Sonarr matches it as a Custom Format
+// (rendering ".PT1." in the filename for Plex to stack on) and the strip system
+// removes it from the Release Group like any other prefix bracket.
 //
-// Keeping the bracket prefix in front means RG_PREFIX_RE still matches, so the
-// strip-prefix features need no token awareness at all.
+//   "[NF][PT1]-EN.TH"   networks + part + language
+//   "[PT1]-EN.TH"       part + language
+//
+// Canonical tokens: part → PT1…PT5, version → V1…V4.
+
+const MULTI_RE = /^(cd|disc|disk|dvd|part|pt|ver|v)(\d+)$/i;
 
 /**
- * Split a Release Group into its three segments.
- * "[NF]-part2-AudioTH" → { prefix: "[NF]-", token: "part2", body: "AudioTH" }
+ * Normalise any part/version spelling to its canonical bracket value.
+ * "part1"/"pt1"/"cd1"/"PT1" → "PT1";  "ver2"/"v2"/"V2" → "V2";  else null.
+ */
+export function normalizeMulti(token) {
+    const m = String(token ?? "").match(MULTI_RE);
+    if (!m) return null;
+    const kind = m[1].toLowerCase();
+    return (kind === "ver" || kind === "v") ? `V${m[2]}` : `PT${m[2]}`;
+}
+
+/**
+ * Split a Release Group into prefix + a LEGACY leading token + body. Kept only
+ * to still read files named the old way ("[NF]-part1-EN.TH"); new output puts
+ * the token in the bracket prefix instead.
  */
 export function splitRG(raw) {
     const s  = raw ?? "";
@@ -38,16 +54,15 @@ export function splitRG(raw) {
     };
 }
 
-/** Strip the [bracket] prefix. The token sits after it, so it survives. */
+/** Strip the [bracket] prefix (which now includes any [PT1]/[V1] token). */
 export function stripRGPrefix(raw) {
     return (raw ?? "").replace(RG_PREFIX_RE, "");
 }
 
-/** Replace (or insert, or with token=null remove) the partN/verN token. */
+/** Set (token) / remove (null) the part-version token, rebuilding the RG. */
 export function withRGToken(raw, token) {
-    const { prefix, body } = splitRG(raw);
-    if (!token) return prefix + body;
-    return body ? `${prefix}${token}-${body}` : `${prefix}${token}`;
+    const p = parseRG(raw);
+    return buildValue(p.networks, p.editions, p.audioCodes, p.subCodes, token);
 }
 
 // ── Parse existing Release Group ──────────────────────────────────────────────
@@ -64,7 +79,7 @@ export function parseRG(raw) {
     //                              it in [] in the filename
     //   old : "AudioTHENJASubTHEN" AudioXX…SubYY…
 
-    const { prefix: prefixStr, token, body } = splitRG(raw);
+    const { prefix: prefixStr, token: legacyToken, body } = splitRG(raw);
 
     // Collect bracket content only from the prefix region (not from body)
     const brackets = [...prefixStr.matchAll(/\[([^\]]+)\]/g)].map(m => m[1]);
@@ -90,13 +105,18 @@ export function parseRG(raw) {
     const tokens = brackets.flatMap(b => b.split(/\s+/).filter(Boolean));
 
     const networks = [], editions = [];
+    let token = null;
     tokens.forEach(t => {
-        if (NETWORKS.find(n => n.value === t || n.label === t))      networks.push(t);
+        const nm = normalizeMulti(t);
+        if (nm)                                                     token = nm;
+        else if (NETWORKS.find(n => n.value === t || n.label === t)) networks.push(t);
         else if (EDITIONS.find(e => e.value === t || e.label === t)) editions.push(t);
     });
+    // Fall back to a legacy leading token ("[NF]-part1-…") from old files.
+    if (!token && legacyToken) token = normalizeMulti(legacyToken);
 
     return {
-        token,      // e.g. "part2" | "ver1" | null
+        token,      // canonical "PT2" | "V1" | null
         networks,   // e.g. ["TrueID","NANA"]
         editions,   // e.g. ["Extended"]
         audioCodes, // e.g. ["TH","EN","JA"]
@@ -107,24 +127,24 @@ export function parseRG(raw) {
 // ── Build output string ───────────────────────────────────────────────────────
 
 // networks & editions are arrays; audioCodes & subCodes are arrays of 2-char codes.
-// Language body is the new "<audio>.<sub>" encoding (e.g. "THENJA.THEN"); the
-// {.[Release Group]} naming token wraps it in [] in the filename.
-// `token` (partN/verN) is placed between the bracket prefix and the language body
-// so the prefix stays in front: "[NF]-part1-THENJA.THEN".
+// The part/version `token` (any spelling) is normalised to PT#/V# and appended
+// to the bracket prefix — "[NF][PT1]-THENJA.THEN" — so it behaves like a network
+// and the strip system removes it. Language body is "<audio>.<sub>".
 export function buildValue(networks, editions, audioCodes, subCodes, token = null) {
-    const prefix = [...networks, ...editions].map(v => `[${v}]`).join("");
+    const brackets = [...networks, ...editions];
+    const multi = normalizeMulti(token);
+    if (multi) brackets.push(multi);
+    const prefix = brackets.map(v => `[${v}]`).join("");
 
     // Subtitles never appear without audio, so a body is either "<audio>" or
-    // "<audio>.<sub>" — no leading-dot / sub-only form. Primary languages
-    // (TH, EN) are pinned to the front regardless of the order they were picked.
+    // "<audio>.<sub>". Primary languages (TH, EN) are pinned to the front.
     const audio = orderLangCodes(audioCodes).join("");
     const sub   = orderLangCodes(subCodes).join("");
     const lang  = audio ? (sub ? `${audio}.${sub}` : audio) : "";
 
-    const tail = [token, lang].filter(Boolean).join("-");
-    if (!prefix && !tail) return "";
-    if (!prefix) return tail;
-    return `${prefix}-${tail}`;
+    if (!prefix && !lang) return "";
+    if (!prefix) return lang;
+    return `${prefix}-${lang}`;
 }
 
 /**

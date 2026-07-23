@@ -1,12 +1,11 @@
-import { NETWORKS, EDITIONS, HDTV_FIX } from "./constants.js";
+import { NETWORKS, EDITIONS, HDTV_FIX, MAX_LANG } from "./constants.js";
 import { getSpData } from "./state.js";
 import { apiReq, waitForCommand, waitForFileUpdate } from "./api.js";
 import { fmtEp, firstEp, showToast } from "./utils.js";
 import { buildValue, needsRGSuggestion } from "./rg-parser.js";
-import { makeMultiPills, makeLangPicker } from "./pickers.js";
-import { mapLangNameToCode, suggestRGFromFile } from "./lang.js";
-import { checkRenameMismatch } from "./rename.js";
-import { recheckPrefixFiles } from "./prefix-fix.js";
+import { makeSelect2 } from "./pickers.js";
+import { mapLangNameToCode, suggestRGFromFile, sortedLangs } from "./lang.js";
+import { advanceRenameThenStrip } from "./flow-steps.js";
 import { createProgress } from "./progress-ui.js";
 
 // ── RG Suggestion — detect missing Audio in Release Group, suggest from mediaInfo ──
@@ -94,82 +93,84 @@ export function buildRGSuggestionUI(series, candidates) {
 
     const panel = document.createElement("div");
     panel.id = "rg-sugg-panel";
+    const descHtml = (() => {
+        const f = candidates.length, e = totalEpCount;
+        const fLabel = `<strong>${f}</strong> file${f > 1 ? "s" : ""}`;
+        const eLabel = e !== f ? ` (<strong>${e}</strong> episode${e > 1 ? "s" : ""})` : "";
+        return `${fLabel}${eLabel} have no language in their Release Group.`;
+    })();
+    panel.classList.add("rgm-overlay");
     panel.innerHTML = `
-        <div class="rgsp-head">
-            💡 Suggest Release Group
-            <span class="rgsp-close">✕</span>
-        </div>
-        <div class="rgsp-body">
-            <p class="rgsp-desc">
-                ${(() => {
-                    const f = candidates.length, e = totalEpCount;
-                    const fLabel = `<strong>${f}</strong> file${f > 1 ? "s" : ""}`;
-                    const eLabel = e !== f ? ` (<strong>${e}</strong> episode${e > 1 ? "s" : ""})` : "";
-                    return `${fLabel}${eLabel} have no Audio in Release Group.`;
-                })()}
-                Click a file row to edit its values, or edit here to apply to all checked files.
-            </p>
-            <div class="rgsp-section-lbl">
-                Release Group
-                <span class="rgsp-edit-target-bar" style="display:inline-flex;margin-left:8px">
-                    — editing: <span id="rgsp-edit-target-val" class="rgsp-edit-target-val">All files</span>
-                </span>
+        <div class="rgm-modal rgm-modal--wide">
+            <div class="rgm-head">
+                <span class="rgm-title">💡 Suggest Release Group</span>
+                <span class="rgm-close">✕</span>
             </div>
-            <div class="rgsp-picker-box" id="rgsp-picker-box"></div>
-            <div class="rgsp-section-lbl">Preview</div>
-            <div id="rgsp-preview" class="ep-pop-preview empty" style="margin-bottom:10px">—</div>
-            ${hdtvFiles.length > 0 ? `
-            <div class="rgsp-section-lbl">Quality fix</div>
-            <label class="rgsp-quality-row">
-                <input type="checkbox" class="rgsp-quality-chk" id="rgsp-q-fix" checked>
-                <span class="rgsp-quality-txt">
-                    <span class="rgsp-quality-label">Fix HDTV → WEBDL for ${hdtvFiles.length} file${hdtvFiles.length > 1 ? "s" : ""}</span>
-                    <span class="rgsp-quality-detail">e.g. HDTV-1080p → WEBDL-1080p</span>
-                </span>
-            </label>` : ""}
-            <div class="rgsp-section-lbl">Rename option</div>
-            <label class="rgsp-quality-row" style="margin-bottom:0">
-                <input type="checkbox" class="rgsp-quality-chk" id="rgsp-rename-now"
-                    ${renameNowDefault ? "checked" : ""}>
-                <span class="rgsp-quality-txt">
-                    <span class="rgsp-quality-label">Rename files immediately after applying</span>
-                    <span class="rgsp-quality-detail">Uncheck to show rename confirmation popup first</span>
-                </span>
-            </label>
-            <div class="rgsp-section-lbl">Files (${candidates.length})
-                <span style="font-size:10px;color:#567;font-weight:normal;margin-left:6px">
-                    — click a row to edit its Release Group
-                </span>
+            <div class="rgm-main">
+                <div class="rgm-left">
+                    <p class="rgm-desc">${descHtml} คลิกไฟล์เพื่อแก้ทีละตัว หรือแก้ที่นี่เพื่อใช้กับไฟล์ที่ติ๊กทั้งหมด</p>
+                    <div class="rgm-section-lbl">
+                        Release Group
+                        <span class="rgsp-edit-target-bar">— editing: <span id="rgsp-edit-target-val" class="rgsp-edit-target-val">All files</span></span>
+                    </div>
+                    <div class="rgm-picker-box" id="rgsp-picker-box"></div>
+                    <div class="rgm-section-lbl">Preview</div>
+                    <div id="rgsp-preview" class="rgm-preview empty">—</div>
+                    ${hdtvFiles.length > 0 ? `
+                    <label class="rgm-opt-row">
+                        <input type="checkbox" class="rgm-chk" id="rgsp-q-fix" checked>
+                        <span class="rgm-opt-txt">
+                            <span class="rgm-opt-label">Fix HDTV → WEBDL for ${hdtvFiles.length} file${hdtvFiles.length > 1 ? "s" : ""}</span>
+                            <span class="rgm-opt-detail">e.g. HDTV-1080p → WEBDL-1080p</span>
+                        </span>
+                    </label>` : ""}
+                    <label class="rgm-opt-row">
+                        <input type="checkbox" class="rgm-chk" id="rgsp-rename-now" ${renameNowDefault ? "checked" : ""}>
+                        <span class="rgm-opt-txt">
+                            <span class="rgm-opt-label">Rename files immediately after applying</span>
+                            <span class="rgm-opt-detail">Uncheck to show rename confirmation popup first</span>
+                        </span>
+                    </label>
+                </div>
+                <div class="rgm-right">
+                    <div class="rgm-section-lbl">Files (${candidates.length})
+                        <span class="rgm-hint">— click a row to edit its Release Group</span>
+                    </div>
+                    <div class="rfp-tree" id="rgsp-tree"></div>
+                    <div class="rgsp-status" id="rgsp-status"></div>
+                </div>
             </div>
-            <div class="rfp-tree" id="rgsp-tree"></div>
-            <div class="rgsp-status" id="rgsp-status"></div>
-        </div>
-        <div class="rgsp-footer">
-            <button class="rgsp-btn rgsp-cancel" id="rgsp-cancel">Dismiss</button>
-            <button class="rgsp-btn rgsp-apply" id="rgsp-apply" disabled>Apply (0)</button>
+            <div class="rgm-footer">
+                <button class="rgm-btn rgm-btn--ghost" id="rgsp-cancel">Dismiss</button>
+                <button class="rgm-btn rgm-btn--primary" id="rgsp-apply" disabled>Apply (0)</button>
+            </div>
         </div>`;
     document.body.appendChild(panel);
     requestAnimationFrame(() => panel.classList.add("open"));
 
+    const closeSugg = () => { panel.classList.remove("open"); document.removeEventListener("keydown", onKey); };
+    const onKey = e => { if (e.key === "Escape") closeSugg(); };
+    document.addEventListener("keydown", onKey);
+    // Backdrop blocks page clicks but does NOT close — prevents accidental dismiss
+    panel.addEventListener("mousedown", e => { if (e.target === panel) { e.preventDefault(); e.stopPropagation(); } });
+
     // ── Picker ───────────────────────────────────────────────────────────
     const pickerBox = panel.querySelector("#rgsp-picker-box");
+    const mkField = (label, comp) => {
+        const f = document.createElement("div"); f.className = "rgm-field";
+        const l = document.createElement("div"); l.className = "rgm-sub-lbl"; l.textContent = label;
+        f.append(l, comp.el);
+        return f;
+    };
 
-    const netLbl = document.createElement("div");
-    netLbl.className = "rgsp-picker-sub-lbl"; netLbl.textContent = "Network";
-    const netComp = makeMultiPills(NETWORKS, "net", [], syncPreview);
+    const netComp   = makeSelect2(NETWORKS, [], syncPreview, "network");
+    const edtComp   = makeSelect2(EDITIONS, [], syncPreview, "edition");
+    const audioComp = makeSelect2(sortedLangs(), bestSugg.audioCodes, syncPreview, "audio", MAX_LANG);
+    const subComp   = makeSelect2(sortedLangs(), bestSugg.subCodes,   syncPreview, "sub",   MAX_LANG);
 
-    const edtLbl = document.createElement("div");
-    edtLbl.className = "rgsp-picker-sub-lbl"; edtLbl.textContent = "Edition";
-    const edtComp = makeMultiPills(EDITIONS, "edt", [], syncPreview);
-
-    const langLbl = document.createElement("div");
-    langLbl.className = "rgsp-picker-sub-lbl"; langLbl.textContent = "Language";
-    const dual = document.createElement("div"); dual.className = "rg-dual";
-    const audioComp = makeLangPicker("Audio",    bestSugg.audioCodes, syncPreview);
-    const subComp   = makeLangPicker("Subtitle", bestSugg.subCodes,   syncPreview);
-    dual.append(audioComp.el, subComp.el);
-
-    pickerBox.append(netLbl, netComp.el, edtLbl, edtComp.el, langLbl, dual);
+    const langRow = document.createElement("div"); langRow.className = "rgm-lang-row";
+    langRow.append(mkField("Audio", audioComp), mkField("Subtitle", subComp));
+    pickerBox.append(mkField("Network", netComp), mkField("Edition", edtComp), langRow);
 
     const preview = panel.querySelector("#rgsp-preview");
     // ── File tree — declared BEFORE syncPreview() to avoid TDZ error ─────
@@ -239,7 +240,7 @@ export function buildRGSuggestionUI(series, candidates) {
         // Update preview without writing back to fileValues
         const val = buildValue(vals.nets, vals.edts, vals.audioCodes, vals.subCodes);
         preview.textContent = val || "—";
-        preview.className = "ep-pop-preview" +
+        preview.className = "rgm-preview" +
             (!val ? " empty" : vals.nets.length || vals.edts.length ? " has-network" : "");
     }
 
@@ -255,7 +256,7 @@ export function buildRGSuggestionUI(series, candidates) {
         const val = buildValue(nets, edts, audio, sub);
 
         preview.textContent = val || "—";
-        preview.className = "ep-pop-preview" +
+        preview.className = "rgm-preview" +
             (!val ? " empty" : nets.length || edts.length ? " has-network" : "");
 
         // Don't touch fileValues until initialization is complete
@@ -347,8 +348,8 @@ export function buildRGSuggestionUI(series, candidates) {
                         <span class="rfp-ep-label">${fmtEp(c.ep)}</span>
                         <span class="rfp-old">${c.releaseGroup || "(none)"}</span>
                         <span class="rfp-arrow">→</span>
-                        <span class="rfp-new rgsp-new-rg" data-file-id="${c.id}" style="color:#fa0">${suggStr}</span>
-                        ${qualFix ? `<span class="rgsp-quality-badge" style="font-size:10px;color:#b80;opacity:.8">🎬${c.quality.quality.name}→${qualFix.name}</span>` : ""}
+                        <span class="rfp-new rgsp-new-rg" data-file-id="${c.id}">${suggStr}</span>
+                        ${qualFix ? `<span class="rgsp-quality-badge">🎬${c.quality.quality.name}→${qualFix.name}</span>` : ""}
                     </div>`;
                 epList.appendChild(row);
 
@@ -424,8 +425,8 @@ export function buildRGSuggestionUI(series, candidates) {
     });
 
     // ── Event handlers ───────────────────────────────────────────────────
-    panel.querySelector(".rgsp-close").addEventListener("click",  () => panel.classList.remove("open"));
-    panel.querySelector("#rgsp-cancel").addEventListener("click", () => panel.classList.remove("open"));
+    panel.querySelector(".rgm-close").addEventListener("click",  closeSugg);
+    panel.querySelector("#rgsp-cancel").addEventListener("click", closeSugg);
     panel.querySelector("#rgsp-apply").addEventListener("click", () => {
         const applyQFix = panel.querySelector("#rgsp-q-fix")?.checked ?? false;
         const renameNow = panel.querySelector("#rgsp-rename-now")?.checked ?? true;
@@ -456,35 +457,17 @@ export async function executeRGSuggestion(series, selected, opts, panel) {
     const cancelBtn = panel.querySelector("#rgsp-cancel");
     applyBtn.disabled = cancelBtn.disabled = true;
 
-    // ── Build step list based on options ─────────────────────────────────────
-    const stepLabels = [
+    const prog = createProgress("💡 Applying Release Group", [
         `Setting Release Group (${selected.length} file${selected.length > 1 ? "s" : ""})`,
         "Verifying with API",
-    ];
-    if (opts.renameNow) {
-        stepLabels.push("Sending rename command");
-        stepLabels.push("Waiting for rename");
-    } else {
-        stepLabels.push("Preparing rename popup");
-    }
-    if (opts.hasPrefix && opts.renameNow) {
-        stepLabels.push("Checking strip files");
-    }
-
-    const STEP_RG     = 0;
-    const STEP_VERIFY = 1;
-    const STEP_CMD    = 2;
-    const STEP_WAIT   = opts.renameNow ? 3 : -1;
-    const STEP_STRIP  = (opts.hasPrefix && opts.renameNow) ? 4 : -1;
-
-    const prog = createProgress("💡 Applying Release Group", stepLabels);
+    ]);
 
     try {
         // ── Step 0: PUT each file's Release Group ─────────────────────────
         let lastFileId, lastExpectedRG;
         for (let i = 0; i < selected.length; i++) {
             const f = selected[i];
-            prog.update(STEP_RG, "active", `${i + 1} / ${selected.length}`);
+            prog.update(0, "active", `${i + 1} / ${selected.length}`);
 
             const fv = opts.fileValues.get(f.id);
             const fileRG = fv
@@ -504,7 +487,6 @@ export async function executeRGSuggestion(series, selected, opts, panel) {
 
             await apiReq("PUT", `/api/v3/episodefile/${f.id}`, update);
 
-            // Update local cache
             const _spData = getSpData();
             if (_spData) {
                 const idx = _spData.files.findIndex(x => x.id === f.id);
@@ -514,53 +496,18 @@ export async function executeRGSuggestion(series, selected, opts, panel) {
             lastFileId = f.id;
             lastExpectedRG = fileRG;
         }
-        prog.update(STEP_RG, "done", `${selected.length} updated`);
+        prog.update(0, "done", `${selected.length} updated`);
 
         // ── Step 1: Verify DB commit via API poll ─────────────────────────
-        prog.update(STEP_VERIFY, "active", "polling…");
-        if (lastFileId != null) {
-            await waitForFileUpdate(lastFileId, lastExpectedRG);
-        }
-        prog.update(STEP_VERIFY, "done");
+        prog.update(1, "active", "polling…");
+        if (lastFileId != null) await waitForFileUpdate(lastFileId, lastExpectedRG);
+        prog.update(1, "done");
 
         document.getElementById("rg-suggest-btn")?.classList.remove("has-suggestions");
+        prog.finish(`✓ ${selected.length} Release Group(s) set.`, 900);
 
-        if (opts.renameNow) {
-            // ── Step 2: Send rename command ───────────────────────────────
-            prog.update(STEP_CMD, "active");
-            const cmd = await apiReq("POST", "/api/v3/command", {
-                name: "RenameFiles",
-                seriesId: series.id,
-                files: selected.map(f => f.id),
-            });
-            prog.update(STEP_CMD, "done");
-
-            // ── Step 3: Wait for rename to complete ───────────────────────
-            prog.update(STEP_WAIT, "active", "queued");
-            await waitForCommand(cmd.id, st => prog.update(STEP_WAIT, "active", st));
-            prog.update(STEP_WAIT, "done");
-
-            // ── Step 4 (optional): Check for strip ───────────────────────
-            if (STEP_STRIP >= 0) {
-                prog.update(STEP_STRIP, "active");
-                const _spData = getSpData();
-                if (_spData?.series) await recheckPrefixFiles();
-                prog.update(STEP_STRIP, "done");
-            }
-
-            prog.finish(`✓ ${selected.length} file(s) updated & renamed.`, 1500);
-            panel.classList.remove("open");
-
-        } else {
-            // ── Step 2: Show rename confirmation popup ────────────────────
-            prog.update(STEP_CMD, "active");
-            const afterRename = opts.hasPrefix ? () => recheckPrefixFiles() : null;
-            const _spData = getSpData();
-            if (_spData?.series) checkRenameMismatch(_spData.series, null, afterRename);
-            prog.update(STEP_CMD, "done");
-            prog.finish(`✓ ${selected.length} RG(s) set — confirm rename.`, 800);
-            panel.classList.remove("open");
-        }
+        // Advance the SAME modal through Rename → Strip (auto-run per Settings)
+        await advanceRenameThenStrip(panel, series);
 
     } catch (e) {
         prog.fail(`✗ ${e.message}`);

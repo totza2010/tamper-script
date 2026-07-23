@@ -139,7 +139,7 @@ export function applyAutoPartRelease(baseRG) {
     const touched = [];
     for (const group of groups) {
         group.forEach((item, i) => {
-            updateItems(store, [item.id], { releaseGroup: withRGToken(baseRG, `part${i + 1}`) });
+            updateItems(store, [item.id], { releaseGroup: withRGToken(baseRG, `PT${i + 1}`) });
             touched.push(item);
         });
     }

@@ -3,14 +3,23 @@
 import { getSpData } from "./state.js";
 import { apiReq } from "./api.js";
 import { showToast } from "./utils.js";
-import { withRGToken } from "./rg-parser.js";
+import { withRGToken, normalizeMulti } from "./rg-parser.js";
 
-// ── Plex multi-part suffixes: cdX, discX, diskX, dvdX, partX, ptX ────────────
-// ref: https://support.plex.tv/articles/200220677-local-media-assets-movies/
+// ── Plex multi-part indicator in a filename ──────────────────────────────────
+// Rendered from the [PT1]/[V1] Custom Format, e.g. "…NF.PT1.WEBDL…", or the
+// legacy "-part1-" form. Part: cd/disc/dvd/part/pt#. Version: V#/ver#.
 const MULTI_PART_RE = /[-\s._(](cd|disc|disk|dvd|part|pt)\d+(\b|[_.\-]|$)/i;
+const MULTI_VER_RE  = /[-\s._(](ver|v)\d+(\b|[_.\-]|$)/i;
 
-// ── Multi-version suffix: verN ────────────────────────────────────────────────
-const MULTI_VER_RE  = /[-\s._(]ver\d+(\b|[_.\-]|$)/i;
+// One token anywhere in a filename, with its surrounding separators captured
+// so it can be swapped in place: "$1" + newToken + "$3".
+const NAME_TOKEN_RE = /([-\s._([])((?:cd|disc|disk|dvd|part|pt|ver|v)\d+)([-\s._)\]]|$)/i;
+
+/** Canonical PT#/V# token found in a filename, or null. */
+function extractToken(filename) {
+    const m = String(filename ?? "").match(NAME_TOKEN_RE);
+    return m ? normalizeMulti(m[2]) : null;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -33,9 +42,9 @@ function splitPath(p) {
 function isMultiPart(filename) { return MULTI_PART_RE.test(filename); }
 function isMultiVer(filename)  { return MULTI_VER_RE.test(filename);  }
 
+/** Canonical token label of a filename ("PT1"/"V1"), or a generic fallback. */
 function extractPartLabel(filename) {
-    const m = filename.match(/(cd|disc|disk|dvd|part|pt)\s*(\d+)/i);
-    return m ? `${m[1].toLowerCase()}${m[2]}` : "multi-part";
+    return extractToken(filename) ?? "multi-part";
 }
 
 function parseSeasonEp(filename) {
@@ -43,138 +52,96 @@ function parseSeasonEp(filename) {
     return m ? { sn: parseInt(m[1]), ep: parseInt(m[2]) } : null;
 }
 
+/** Numeric part of a filename's token (PT2 → 2), or null. */
 function extractPartNum(filename) {
-    const m = filename.match(/(cd|disc|disk|dvd|part|pt)\s*(\d+)/i);
-    return m ? parseInt(m[2]) : null;
+    const t = extractToken(filename);
+    return t ? parseInt(t.replace(/\D/g, "")) : null;
 }
 
-/** Extract version number from filename: [VER2] / -ver2- / _VER2_ etc. */
+/** Same as extractPartNum but only for version (V#) tokens. */
 function extractVersionNum(filename) {
-    const m = filename.match(/\bver\s*(\d+)\b/i);
-    return m ? parseInt(m[1]) : null;
+    const t = extractToken(filename);
+    return t && /^V/.test(t) ? parseInt(t.replace(/\D/g, "")) : null;
 }
 
-/** Extract part format keyword from a filename ("part", "pt", "cd", …) */
-function extractPartFormat(filename) {
-    const m = filename.match(/(cd|disc|disk|dvd|part|pt)\s*\d+/i);
-    return m ? m[1].toLowerCase() : "pt";
-}
+// ── Pair-token helpers ────────────────────────────────────────────────────────
 
-// ── Unified pair-token helpers ────────────────────────────────────────────────
-
-/** True when token is a version token (ver1, ver2, …) */
-function isVerToken(token) { return /^ver/i.test(token ?? ""); }
+/** True when token is a version token (V1, V2, … / legacy ver1). */
+function isVerToken(token) { return /^v/i.test(token ?? ""); }
 
 /**
- * Strip any existing pair indicator of the same type from a base filename.
- * – version tokens → remove -[VERn] / -vern
- * – part tokens    → remove -(cd|disc|disk|dvd|part|pt)n
+ * Compute a rename target by swapping the part/version token in the template
+ * file's name for `token` (canonical PT#/V#). The token now lives in the Custom
+ * Format section of the filename ("…NF.PT1.WEBDL…"), so we swap it in place —
+ * the result differs by nothing but the token, exactly what Plex needs to stack.
+ * Returns null when the template has no token to key off.
  */
-function stripBaseToken(base, token) {
-    if (isVerToken(token)) {
-        return base
-            .replace(/-\[VER\d+\]/gi, "")
-            .replace(/-ver\d+/gi, "")
-            .replace(/-{2,}/g, "-")
-            .replace(/-$/, "");
-    }
-    return base
-        .replace(/-(cd|disc|disk|dvd|part|pt)\d+/gi, "")
-        .replace(/-{2,}/g, "-")
-        .replace(/-$/, "");
-}
-
-/**
- * Compute a rename target by inserting the token into the release group, using
- * the Sonarr episode file as the naming template. The token sits after the
- * [bracket] prefix: "[NF]-AudioTH" + "part2" → "[NF]-part2-AudioTH".
- * token examples: "pt1", "pt2", "part3", "cd2", "ver1", "ver2"
- */
-function computePairTargetName(importedFile, token) {
-    const { filename } = splitPath(importedFile.relativePath ?? "");
-    if (!filename) return null;
-    const dot  = filename.lastIndexOf(".");
-    const ext  = dot >= 0 ? filename.slice(dot) : ".mkv";
-    const base = dot >= 0 ? filename.slice(0, dot) : filename;
-
-    const rg = importedFile.releaseGroup ?? "";
-    // No Release Group to key off — fall back to the plain Plex suffix.
-    if (!rg) return `${stripBaseToken(base, token)}-${token}${ext}`;
-
-    const newRG = withRGToken(rg, token);
-
-    // Sonarr's naming format ends with {Release Group}, so swap that suffix.
-    // The result then differs from the source by nothing but the token, which
-    // is exactly what Plex requires to stack the two files.
-    for (const current of [rg, withRGToken(rg, null)]) {
-        if (!current) continue;
-        const suffix = `-${current}`;
-        if (base.toLowerCase().endsWith(suffix.toLowerCase())) {
-            // When the Release Group carries no token, the old one may still be
-            // sitting in the filename ahead of it — drop it or we double up.
-            const head = stripBaseToken(base.slice(0, base.length - suffix.length), token);
-            return `${head}-${newRG}${ext}`;
-        }
-    }
-
-    // The filename doesn't end with its own Release Group (a double extension,
-    // a hand-edited name, …). Guessing here produces garbage — say we can't.
-    return null;
+function computePairTargetName(templateFile, token) {
+    const { filename } = splitPath(templateFile.relativePath ?? "");
+    if (!filename || !NAME_TOKEN_RE.test(filename)) return null;
+    return filename.replace(NAME_TOKEN_RE, `$1${token}$3`);
 }
 
 /**
  * Migrate a stored decision from old types to the unified "pair" type.
  * Returns the decision unchanged if it's already a current type.
  */
+/** Normalise a decision's thisToken/sonarrToken to canonical PT#/V#. */
+function normDec(dec) {
+    if (!dec) return dec;
+    const out = { ...dec };
+    if (out.thisToken)   out.thisToken   = normalizeMulti(out.thisToken)   ?? out.thisToken;
+    if (out.sonarrToken) out.sonarrToken = normalizeMulti(out.sonarrToken) ?? out.sonarrToken;
+    return out;
+}
+
 function migrateDecision(dec) {
     if (!dec) return null;
     const t = dec.type ?? "";
 
-    // Already current types — pass through
-    if (t === "pair" || t === "pair-picking" || t === "ignore" || t === "delete") return dec;
+    // Already current types — pass through (normalise any legacy token spelling)
+    if (t === "pair" || t === "pair-picking" || t === "ignore" || t === "delete") return normDec(dec);
 
     // Old unmatched multipart (auto-saved, no Sonarr target)
     if (t === "multipart") {
-        const pf = dec.partFormat ?? "pt";
-        return {
+        return normDec({
             ...dec,
             type:           "pair",
             mode:           "part",
-            thisToken:      `${pf}${dec.partNum ?? "?"}`,
+            thisToken:      `PT${dec.partNum ?? "1"}`,
             sonarrToken:    null,
             thisTargetName: dec.targetName ?? null,
-        };
+        });
     }
 
     // Old version (with or without Sonarr target)
     if (t === "version") {
         const thisN   = dec.thisVerNum ?? dec.verNum;
         const sonarrN = dec.sonarrVerNum ?? null;
-        return {
+        return normDec({
             ...dec,
             type:             "pair",
             mode:             "version",
-            thisToken:        thisN   ? `ver${thisN}`   : null,
-            sonarrToken:      sonarrN ? `ver${sonarrN}` : null,
+            thisToken:        thisN   ? `V${thisN}`   : null,
+            sonarrToken:      sonarrN ? `V${sonarrN}` : null,
             thisTargetName:   dec.thisTargetName ?? dec.targetName ?? null,
             sonarrTargetName: dec.sonarrTargetName ?? null,
             sonarrOriginalRG: dec.sonarrOriginalRG ?? null,
-        };
+        });
     }
 
     // Old detected multipart
     if (t === "det-multipart") {
-        const pf = dec.partFormat ?? "pt";
-        return {
+        return normDec({
             ...dec,
             type:             "pair",
             mode:             "part",
-            thisToken:        dec.thisPartNum   ? `${pf}${dec.thisPartNum}`   : null,
-            sonarrToken:      dec.sonarrPartNum ? `${pf}${dec.sonarrPartNum}` : null,
+            thisToken:        dec.thisPartNum   ? `PT${dec.thisPartNum}`   : null,
+            sonarrToken:      dec.sonarrPartNum ? `PT${dec.sonarrPartNum}` : null,
             thisTargetName:   dec.thisTargetName   ?? null,
             sonarrTargetName: dec.sonarrTargetName ?? null,
             sonarrOriginalRG: dec.sonarrOriginalRG ?? null,
-        };
+        });
     }
 
     // Old picking states — discard (re-open as fresh picking)
@@ -344,7 +311,7 @@ function renderPairPickingForm(mode, epOpts, fmt, defaultThisN, defaultSonarrN) 
     ).join("");
 
     const pills = (defaultN) => nums.map(n => {
-        const tok = `${fmt}${n}`;
+        const tok = isVer ? `V${n}` : `PT${n}`;
         return `<button class="unm-part-pill${n === defaultN ? " active" : ""}" data-token="${tok}">${tok}</button>`;
     }).join("");
 
@@ -644,13 +611,13 @@ function buildDetectedPairCard(item, dec, epOpts, pairedFile, mode = "part") {
     let tokenLabel, thisNum, tokenFmt;
     if (mode === "version") {
         const vn = extractVersionNum(filename) ?? 1;
-        tokenLabel = `ver${vn}`;
+        tokenLabel = `V${vn}`;
         thisNum    = vn;
-        tokenFmt   = "ver";
+        tokenFmt   = "V";
     } else {
-        tokenLabel = extractPartLabel(filename);
         thisNum    = extractPartNum(filename) ?? 1;
-        tokenFmt   = extractPartFormat(filename);
+        tokenLabel = `PT${thisNum}`;
+        tokenFmt   = "PT";
     }
 
     const autoPaired = !!pairedFile;
@@ -669,8 +636,8 @@ function buildDetectedPairCard(item, dec, epOpts, pairedFile, mode = "part") {
             pairedInfo = {
                 thisFilename:  filename,
                 pairFilename:  pfn,
-                thisPartLabel: `ver${thisVn}`,
-                pairPartLabel: `ver${pairVn}`,
+                thisPartLabel: `V${thisVn}`,
+                pairPartLabel: `V${pairVn}`,
                 expectedName,
                 pairReleaseGroup: pairedFile.releaseGroup ?? "",
             };

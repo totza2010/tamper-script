@@ -32,18 +32,153 @@ export function makeMultiPills(items, extraClass, activeValues, onChange) {
     return { el: wrap, get, set };
 }
 
+// ── Searchable multi-select (select2 style: chips + dropdown) ────────────────
+
+/**
+ * Compact multi-select: selected values show as removable chips; a "+ add"
+ * button opens a searchable dropdown of the remaining options. Same
+ * { el, get, set } contract as makeMultiPills, so it's a drop-in replacement
+ * that doesn't overflow when the option list is long.
+ *
+ * @param {{label:string,value:string}[]} items
+ * @param {string[]} initValues
+ * @param {() => void} onChange
+ * @param {string} placeholder  – noun for the "+ add {placeholder}" button
+ * @param {number} max          – cap on selected values (0 = unlimited)
+ */
+export function makeSelect2(items, initValues, onChange, placeholder = "add", max = 0) {
+    const wrap = document.createElement("div");
+    wrap.className = "s2-wrap";
+
+    const box = document.createElement("div");
+    box.className = "s2-box";
+    const addBtn = document.createElement("button");
+    addBtn.type = "button";
+    addBtn.className = "s2-add";
+    addBtn.textContent = `+ ${placeholder}`;
+    box.appendChild(addBtn);
+
+    // The dropdown is appended to <body> (not the wrap) and positioned with
+    // fixed coordinates, so a scrolling/overflow-hidden ancestor never clips it
+    // — this is how select2 floats its menu.
+    const pop = document.createElement("div");
+    pop.className = "s2-pop";
+    const search = document.createElement("input");
+    search.type = "text";
+    search.className = "s2-search";
+    search.placeholder = "Search…";
+    const optsEl = document.createElement("div");
+    optsEl.className = "s2-opts";
+    pop.append(search, optsEl);
+
+    wrap.append(box);
+
+    const selected = [];              // values, in selection order
+    const optEls   = new Map();       // value → option element
+
+    items.forEach(it => {
+        const o = document.createElement("button");
+        o.type = "button";
+        o.className = "s2-opt";
+        o.textContent = it.label;
+        o.dataset.value  = it.value;
+        o.dataset.search = `${it.label} ${it.value}`.toLowerCase();
+        o.addEventListener("click", () => { add(it.value); search.value = ""; filter(); });
+        optsEl.appendChild(o);
+        optEls.set(it.value, o);
+    });
+
+    function chipFor(value) {
+        const it = items.find(i => i.value === value);
+        const chip = document.createElement("span");
+        chip.className = "s2-chip";
+        chip.innerHTML = `<span></span><span class="s2-x" title="remove">✕</span>`;
+        chip.firstChild.textContent = it ? it.label : value;
+        chip.querySelector(".s2-x").addEventListener("click", e => { e.stopPropagation(); remove(value); });
+        box.insertBefore(chip, addBtn);
+    }
+    function renderChips() {
+        [...box.querySelectorAll(".s2-chip")].forEach(c => c.remove());
+        selected.forEach(chipFor);
+    }
+    const atMax = () => max > 0 && selected.length >= max;
+    function add(value, silent) {
+        if (selected.includes(value) || atMax()) return;
+        selected.push(value);
+        chipFor(value);
+        filter();
+        if (!silent) onChange();
+    }
+    function remove(value) {
+        const i = selected.indexOf(value);
+        if (i < 0) return;
+        selected.splice(i, 1);
+        renderChips();
+        filter();
+        onChange();
+    }
+    function filter() {
+        const q = search.value.toLowerCase();
+        const full = atMax();
+        optEls.forEach((el, v) =>
+            el.classList.toggle("s2-hide", full || selected.includes(v) || (q && !el.dataset.search.includes(q))));
+        addBtn.style.display = full ? "none" : "";
+    }
+
+    let open = false;
+    function place() {
+        const r = box.getBoundingClientRect();
+        pop.style.left  = `${r.left}px`;
+        pop.style.top   = `${r.bottom + 4}px`;
+        pop.style.width = `${r.width}px`;
+    }
+    function openPop() {
+        open = true;
+        document.body.appendChild(pop);
+        place();
+        pop.classList.add("open");
+        search.value = ""; filter(); search.focus();
+        window.addEventListener("scroll", place, true);
+        window.addEventListener("resize", place);
+    }
+    function closePop() {
+        open = false;
+        pop.classList.remove("open");
+        pop.remove();
+        window.removeEventListener("scroll", place, true);
+        window.removeEventListener("resize", place);
+    }
+    box.addEventListener("click", e => { if (!e.target.closest(".s2-chip")) (open ? closePop() : openPop()); });
+    search.addEventListener("input", filter);
+    document.addEventListener("click", e => {
+        if (open && !wrap.contains(e.target) && !pop.contains(e.target)) closePop();
+    }, true);
+
+    (initValues ?? []).forEach(v => add(v, true));
+
+    const get = () => [...selected];
+    const set = (values, silent) => {
+        selected.length = 0;
+        (values ?? []).forEach(v => { if (!selected.includes(v)) selected.push(v); });
+        renderChips();
+        filter();
+        if (!silent) onChange();
+    };
+    return { el: wrap, get, set };
+}
+
 // ── Multi-part / version token pills (single-select, click again to clear) ───
 
 /**
- * Single-select token picker: part1…part5. A token that isn't one of the
- * defaults (e.g. "ver2") is prepended as an extra pill so rebuilding the
- * Release Group never silently drops it.
+ * Single-select part/version picker. Values are the canonical bracket tokens
+ * PT1…PT5 (multi-part) and V1…V4 (multi-version); one selection per file. An
+ * active token outside the defaults is prepended so it is never dropped.
  */
 export function makePartPills(activeToken, onChange) {
     const wrap = document.createElement("div");
     wrap.className = "rg-pills";
 
-    const tokens = ["part1", "part2", "part3", "part4", "part5"];
+    const tokens = ["PT1", "PT2", "PT3", "PT4", "PT5", "V1", "V2", "V3", "V4"];
     if (activeToken && !tokens.includes(activeToken)) tokens.unshift(activeToken);
 
     tokens.forEach(tok => {

@@ -151,7 +151,10 @@ export const HDTV_FIX = {
     16: { id: 19, name: "WEBDL-2160p" },   // HDTV-2160p → WEBDL-2160p
 };
 
-export const MAX_LANG = 4;
+// Max languages selectable per Audio/Sub picker. Mutable via Settings — it's a
+// `let` so importers see the updated value through the live binding.
+export let MAX_LANG = 4;
+export function setMaxLang(n) { MAX_LANG = Math.min(12, Math.max(1, parseInt(n, 10) || 4)); }
 
 // ── Storage keys ──────────────────────────────────────────────────────────────
 export const LANG_STATS_KEY = `rg_langstats_${location.hostname}`;

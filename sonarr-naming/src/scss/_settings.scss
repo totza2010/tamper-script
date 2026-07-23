@@ -1,4 +1,4 @@
-// ── Settings slide-in panel ───────────────────────────────────────────────────
+// ── Settings FAB launcher (gear button on the page) ──────────────────────────
 
 #rg-settings-btn {
     position: fixed;
@@ -24,141 +24,111 @@
     &:hover { border-color: #4cc; color: #4cc; }
 }
 
-#rg-settings-panel {
-    position: fixed;
-    top: 0;
-    right: -440px;
-    width: 420px;
-    height: 100vh;
-    background: #12121e;
-    border-left: 1px solid #2a2a40;
-    z-index: 10001;
-    display: flex;
-    flex-direction: column;
-    box-shadow: -8px 0 32px rgba(0, 0, 0, .65);
-    font-family: sans-serif;
-    font-size: 13px;
-    color: #e0e0e0;
-    transition: right .25s ease;
-    overflow: hidden;
+// ── Settings modal (built on the shared .rgm-* chrome, light theme) ───────────
 
-    &.open { right: 0; }
-}
-
-.rgs-head {
-    background: #0d0d1e;
-    padding: 14px 16px;
-    font-size: 14px;
-    font-weight: bold;
-    color: #4cc;
-    border-bottom: 1px solid #2a2a40;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-shrink: 0;
-}
-.rgs-close { cursor: pointer; color: #789; font-size: 18px; }
+.rgs-modal { width: 560px; }
 
 .rgs-tabs {
     display: flex;
-    border-bottom: 1px solid #2a2a40;
+    background: var(--sg-card);
+    border-bottom: 1px solid var(--sg-line);
     flex-shrink: 0;
 }
 .rgs-tab {
     flex: 1;
-    padding: 10px 4px;
+    padding: 11px 4px;
     text-align: center;
-    font-size: 12px;
-    color: #567;
+    font-size: 13px;
+    color: var(--sg-muted);
     cursor: pointer;
     border-bottom: 2px solid transparent;
     -webkit-user-select: none;
     user-select: none;
-    transition: all .14s;
+    transition: all .13s;
 
-    &:hover { color: #99b; }
-    &.active { color: #4cc; border-bottom-color: #4cc; }
+    &:hover  { color: var(--sg-text); background: #f2f5fa; }
+    &.active { color: var(--sg-accent); border-bottom-color: var(--sg-accent); font-weight: 600; }
 }
 
-.rgs-body { flex: 1; overflow-y: auto; padding: 14px; }
-.rgs-section { margin-bottom: 20px; }
+.rgs-body { flex: 1; overflow-y: auto; padding: 16px 18px; }
+.rgs-section { margin-bottom: 20px; &:last-child { margin-bottom: 0; } }
 .rgs-section-label {
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: .06em;
-    color: #456;
+    color: var(--sg-faint);
+    font-weight: 600;
     margin-bottom: 8px;
 }
-.rgs-desc { font-size: 12px; color: #567; margin-bottom: 8px; line-height: 1.5; }
-.rgs-pills-wrap { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.rgs-desc { font-size: 12px; color: var(--sg-muted); margin-bottom: 10px; line-height: 1.5; }
+
+.rgs-pills-wrap { display: flex; flex-wrap: wrap; gap: 6px; }
 .rgs-pill {
     padding: 5px 12px;
     border-radius: 13px;
-    border: 1px solid #3a3a55;
-    background: transparent;
-    color: #889;
+    border: 1px solid var(--sg-line2);
+    background: var(--sg-card);
+    color: var(--sg-muted);
     font-size: 12px;
     cursor: pointer;
     -webkit-user-select: none;
     user-select: none;
     transition: all .13s;
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 5px;
 
-    &:hover { border-color: #777; color: #bbb; }
-    &.active { border-color: #4cc; background: #0d2a33; color: #4ef; }
+    &:hover  { border-color: var(--sg-accbd); color: var(--sg-text); }
+    &.active { border-color: var(--sg-accent); background: var(--sg-accbg); color: #1f4fa8; }
 
-    .rgs-x { color: #567; font-size: 13px; transition: color .12s; }
-    &:hover .rgs-x { color: #f88; }
+    .rgs-x { color: #98a; font-size: 13px; transition: color .12s; }
+    &:hover .rgs-x { color: #d55; }
 }
 
-.rgs-add-row { display: flex; gap: 7px; margin-top: 8px; }
+.rgs-add-row { display: flex; gap: 8px; margin-top: 10px; }
 .rgs-input {
     flex: 1;
-    padding: 6px 10px;
-    background: #1a1a2e;
-    border: 1px solid #3a3a55;
-    border-radius: 6px;
-    color: #ddd;
+    padding: 7px 11px;
+    background: var(--sg-card);
+    border: 1px solid var(--sg-line2);
+    border-radius: 8px;
+    color: var(--sg-text);
     font-size: 13px;
     outline: none;
-
-    &:focus { border-color: #4cc; }
+    &:focus { border-color: var(--sg-accent); }
 }
 .rgs-add-btn {
-    padding: 6px 13px;
-    border-radius: 6px;
-    border: 1px solid #4cc;
-    background: transparent;
-    color: #4cc;
+    padding: 7px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--sg-accent);
+    background: var(--sg-accent);
+    color: #fff;
     font-size: 13px;
+    font-weight: 600;
     cursor: pointer;
     transition: all .13s;
-
-    &:hover { background: #0d2a33; }
+    &:hover { background: #2560d8; }
 }
 
 .rgs-key-box {
-    background: #0d0d1e;
-    border: 1px solid #2a2a40;
-    border-radius: 6px;
-    padding: 9px 12px;
+    background: #f2f5fa;
+    border: 1px solid var(--sg-line);
+    border-radius: 8px;
+    padding: 10px 12px;
     font-family: monospace;
     font-size: 12px;
-    color: #6b9;
+    color: var(--sg-muted);
     word-break: break-all;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
 }
 .rgs-small-btn {
-    padding: 6px 12px;
-    border-radius: 5px;
-    border: 1px solid #3a3a55;
-    background: transparent;
-    color: #889;
+    padding: 7px 13px;
+    border-radius: 8px;
+    border: 1px solid var(--sg-line2);
+    background: var(--sg-card);
+    color: var(--sg-muted);
     font-size: 12px;
     cursor: pointer;
     transition: all .13s;
-
-    &:hover { border-color: #f88; color: #f88; }
+    &:hover { border-color: #e2a0a0; color: #c0392b; }
 }

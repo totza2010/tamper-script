@@ -1,0 +1,268 @@
+// ── Shared centered modal (light theme) ─────────────────────────────────────
+// Reusable chrome for any module: add class "rgm-overlay" to a full-screen
+// element containing a ".rgm-modal". Theme colors are CSS custom properties on
+// the overlay so descendants (incl. module-specific overrides) can read them.
+
+.rgm-overlay {
+    --sg-bg:     #f6f8fb;
+    --sg-card:   #ffffff;
+    --sg-line:   #e3e7ee;
+    --sg-line2:  #d3d9e3;
+    --sg-text:   #2b3140;
+    --sg-muted:  #6b7280;
+    --sg-faint:  #9aa2b1;
+    --sg-accent: #2f6fed;
+    --sg-accbg:  #eaf1fe;
+    --sg-accbd:  #b9d3fb;
+
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    background: rgba(18, 22, 33, .5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    font-family: sans-serif;
+    font-size: 13px;
+    color: var(--sg-text);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease;
+
+    &.open { opacity: 1; pointer-events: auto; }
+}
+
+.rgm-modal {
+    width: 560px;
+    max-width: 100%;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--sg-bg);
+    border-radius: 14px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, .4);
+    overflow: hidden;
+    transform: translateY(8px);
+    transition: transform .18s ease;
+    .rgm-overlay.open & { transform: none; }
+}
+.rgm-modal--wide { width: 900px; }
+
+// Single-column scrollable body (rename / strip steps)
+.rgm-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+// ── Header ────────────────────────────────────────────────────────────────────
+.rgm-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    background: var(--sg-card);
+    border-bottom: 1px solid var(--sg-line);
+    flex-shrink: 0;
+}
+.rgm-title { font-size: 15px; font-weight: 600; color: var(--sg-text); }
+.rgm-close {
+    cursor: pointer; color: var(--sg-faint); font-size: 18px; line-height: 1;
+    width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+    border-radius: 6px; transition: all .12s;
+    &:hover { background: #eef1f6; color: var(--sg-text); }
+}
+
+// ── Two-pane body ─────────────────────────────────────────────────────────────
+.rgm-main { flex: 1; display: flex; min-height: 0; }
+.rgm-left {
+    flex: 3;
+    min-width: 0;
+    padding: 16px;
+    overflow-y: auto;
+    border-right: 1px solid var(--sg-line);
+    background: var(--sg-bg);
+}
+.rgm-right {
+    flex: 2;
+    min-width: 0;
+    padding: 16px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+}
+
+// ── Text / sections ────────────────────────────────────────────────────────────
+.rgm-desc {
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--sg-muted);
+    margin: 0 0 14px;
+    padding: 10px 12px;
+    background: var(--sg-accbg);
+    border: 1px solid var(--sg-accbd);
+    border-radius: 8px;
+    strong { color: var(--sg-accent); font-weight: 600; }
+}
+.rgm-section-lbl {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--sg-faint);
+    font-weight: 600;
+    margin: 12px 0 6px;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    &:first-child { margin-top: 0; }
+}
+.rgm-hint { font-size: 10px; color: var(--sg-faint); font-weight: 400; text-transform: none; letter-spacing: 0; }
+
+// ── Picker box + fields ─────────────────────────────────────────────────────────
+.rgm-picker-box {
+    border: 1px solid var(--sg-line);
+    border-radius: 10px;
+    padding: 12px;
+    background: var(--sg-card);
+}
+.rgm-field { margin-bottom: 11px; &:last-child { margin-bottom: 0; } }
+.rgm-sub-lbl {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--sg-muted); margin: 0 0 5px;
+}
+.rgm-lang-row { display: flex; gap: 10px; > * { flex: 1; min-width: 0; } }
+
+// ── Info box (episode / context header inside a modal) ──────────────────────────
+.rgm-info {
+    padding: 10px 12px;
+    background: var(--sg-card);
+    border: 1px solid var(--sg-line);
+    border-radius: 8px;
+    margin-bottom: 4px;
+}
+.rgm-info-label { font-size: 13px; font-weight: 600; color: var(--sg-accent); margin-bottom: 3px; }
+.rgm-info-path  { font-size: 10px; font-family: monospace; color: var(--sg-faint); word-break: break-all; margin-bottom: 4px; }
+.rgm-info-rg {
+    font-size: 11px; color: var(--sg-muted);
+    code { background: #f2f5fa; border: 1px solid var(--sg-line); border-radius: 3px; padding: 1px 5px; font-family: monospace; color: #b5721a; }
+}
+
+// ── Preview ────────────────────────────────────────────────────────────────────
+.rgm-preview {
+    padding: 9px 12px;
+    border-radius: 8px;
+    background: var(--sg-card);
+    border: 1px solid var(--sg-line);
+    font-family: monospace;
+    font-size: 12px;
+    color: #1f7a4d;
+    word-break: break-all;
+    min-height: 20px;
+    &.has-network { color: #b5721a; }
+    &.empty       { color: var(--sg-faint); font-style: italic; }
+}
+
+// ── Option rows (checkbox + label + detail) ─────────────────────────────────────
+.rgm-opt-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 9px 11px;
+    border-radius: 8px;
+    background: var(--sg-card);
+    border: 1px solid var(--sg-line);
+    margin-top: 10px;
+    cursor: pointer;
+    &:hover { border-color: var(--sg-line2); }
+}
+.rgm-opt-txt { flex: 1; }
+.rgm-opt-label  { font-size: 12px; color: var(--sg-text); display: block; }
+.rgm-opt-detail { font-size: 10px; color: var(--sg-muted); margin-top: 2px; display: block; }
+.rgm-chk { accent-color: var(--sg-accent); width: 15px; height: 15px; cursor: pointer; flex-shrink: 0; margin-top: 1px; }
+
+// ── Footer + buttons ─────────────────────────────────────────────────────────────
+.rgm-footer {
+    display: flex;
+    gap: 10px;
+    padding: 12px 18px;
+    background: var(--sg-card);
+    border-top: 1px solid var(--sg-line);
+    flex-shrink: 0;
+}
+.rgm-btn {
+    flex: 1;
+    padding: 9px 0;
+    border: 1px solid var(--sg-line2);
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .13s;
+    background: var(--sg-card);
+    color: var(--sg-muted);
+    &:hover { background: #eef1f6; color: var(--sg-text); }
+    &:disabled { opacity: .45; cursor: default; }
+}
+.rgm-btn--primary {
+    background: var(--sg-accent);
+    color: #fff;
+    border-color: var(--sg-accent);
+    &:hover { background: #2560d8; color: #fff; }
+}
+
+// ── Shared file tree (light override of the dark rfp-* from _panels.scss) ─────
+.rgm-overlay {
+    .rfp-tree { flex: 1; min-height: 0; border: none; border-radius: 0; overflow: visible; }
+    .rfp-ep-list { background: var(--sg-card); }
+    .rfp-season-block {
+        border: 1px solid var(--sg-line);
+        border-radius: 8px;
+        overflow: hidden;
+        margin-bottom: 8px;
+        background: var(--sg-card);
+    }
+    .rfp-season-head {
+        display: flex; align-items: center; gap: 8px;
+        padding: 9px 11px;
+        background: #eef2f8;
+        border: none;
+        font-size: 13px; color: var(--sg-text);
+    }
+    .rfp-season-label { cursor: pointer; font-weight: 500;
+        em { color: var(--sg-muted); font-style: normal; font-weight: 400; }
+        &:hover { color: var(--sg-accent); }
+    }
+    .rfp-toggle { margin-left: auto; color: var(--sg-faint); cursor: pointer; font-size: 11px; }
+    .rfp-ep-row {
+        display: flex; align-items: center; gap: 8px;
+        padding: 7px 11px;
+        border-top: 1px solid var(--sg-line);
+        border-bottom: none;
+        font-size: 12px;
+    }
+    .rfp-chk { accent-color: var(--sg-accent); width: 15px; height: 15px; cursor: pointer; flex-shrink: 0; }
+    .rfp-ep-label { flex: 0 0 auto; color: var(--sg-text); font-weight: 500; }
+    .rfp-old   { color: var(--sg-faint); font-family: monospace; font-size: 11px; word-break: break-all; }
+    .rfp-arrow { color: var(--sg-faint); }
+    .rfp-new   { color: var(--sg-accent); font-family: monospace; font-size: 11px; font-weight: 500; word-break: break-all; }
+
+    // ── Rename step: old → new file rows ────────────────────────────────────
+    .rn-file-list { display: flex; flex-direction: column; gap: 8px; }
+    .rn-file {
+        padding: 9px 11px;
+        border: 1px solid var(--sg-line);
+        border-radius: 8px;
+        background: var(--sg-card);
+        font-family: monospace;
+        font-size: 11px;
+        line-height: 1.5;
+        word-break: break-all;
+    }
+    .rn-old   { color: var(--sg-muted); }
+    .rn-arrow { color: var(--sg-faint); margin: 2px 0; }
+    .rn-new   { color: #1f7a4d; }
+}

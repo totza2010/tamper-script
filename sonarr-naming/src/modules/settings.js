@@ -1,5 +1,9 @@
-import { NETWORKS, EDITIONS, APIKEY_KEY, LANG_PINNED, LANG_STATS_KEY, LANGS } from "./constants.js";
+import { NETWORKS, EDITIONS, APIKEY_KEY, LANG_PINNED, LANG_STATS_KEY, LANGS, setMaxLang } from "./constants.js";
 import { loadLangStats } from "./lang.js";
+
+// Persisted keys for auto-run behaviours (shared with the modules that read them)
+export const AUTO_RENAME_KEY = "rgsp_rename_now";   // Suggest RG: rename after applying
+export const AUTO_STRIP_KEY  = "rfp_strip_now";     // Strip prefix: strip+rename on open
 
 // ── Settings dashboard ────────────────────────────────────────────────────────
 
@@ -11,11 +15,13 @@ export function loadSettings() {
 
 export function saveSettings(obj) { GM_setValue(SETTINGS_KEY, JSON.stringify(obj)); }
 
-// Apply saved custom networks on startup (runs after NETWORKS const is set)
+// Apply saved settings on startup (runs after NETWORKS const is set)
 export function applySavedNetworks() {
-    (loadSettings().customNetworks ?? []).forEach(n => {
+    const s = loadSettings();
+    (s.customNetworks ?? []).forEach(n => {
         if (!NETWORKS.find(x => x.value === n)) NETWORKS.push({ label: n, value: n });
     });
+    if (s.maxLang) setMaxLang(s.maxLang);
 }
 
 // The QUALITIES list is used inside the settings panel (Quality tab)
@@ -41,18 +47,31 @@ export function buildSettingsPanel() {
     const customNets = settings.customNetworks   ?? [];
     const disabledQ  = settings.disabledQualities ?? [];
 
+    panel.classList.add("rgm-overlay");
     panel.innerHTML = `
-        <div class="rgs-head">⚙ Script Settings <span class="rgs-close">✕</span></div>
-        <div class="rgs-tabs">
-            <div class="rgs-tab active" data-tab="networks">Networks</div>
-            <div class="rgs-tab" data-tab="quality">Quality</div>
-            <div class="rgs-tab" data-tab="api">API Key</div>
-        </div>
-        <div class="rgs-body" id="rgs-body"></div>`;
+        <div class="rgm-modal rgs-modal">
+            <div class="rgm-head">
+                <span class="rgm-title">⚙ Script Settings</span>
+                <span class="rgm-close">✕</span>
+            </div>
+            <div class="rgs-tabs">
+                <div class="rgs-tab active" data-tab="networks">Networks</div>
+                <div class="rgs-tab" data-tab="quality">Quality</div>
+                <div class="rgs-tab" data-tab="general">General</div>
+                <div class="rgs-tab" data-tab="api">API Key</div>
+            </div>
+            <div class="rgs-body" id="rgs-body"></div>
+        </div>`;
 
     document.body.appendChild(panel);
     requestAnimationFrame(() => panel.classList.add("open"));
-    panel.querySelector(".rgs-close").addEventListener("click", () => panel.classList.remove("open"));
+
+    const closeSettings = () => { panel.classList.remove("open"); document.removeEventListener("keydown", onKey); };
+    const onKey = e => { if (e.key === "Escape") closeSettings(); };
+    document.addEventListener("keydown", onKey);
+    panel.querySelector(".rgm-close").addEventListener("click", closeSettings);
+    // Backdrop blocks page clicks but does not close — prevents accidental dismiss
+    panel.addEventListener("mousedown", e => { if (e.target === panel) { e.preventDefault(); e.stopPropagation(); } });
 
     const tabs = [...panel.querySelectorAll(".rgs-tab")];
     tabs.forEach(t => t.addEventListener("click", () => {
@@ -140,6 +159,54 @@ export function buildSettingsPanel() {
             body.appendChild(sec);
         }
 
+        if (name === "general") {
+            // ── Automation toggles ────────────────────────────────────────
+            const autoSec = document.createElement("div"); autoSec.className = "rgs-section";
+            autoSec.innerHTML = `<div class="rgs-section-label">Automation</div>
+                <div class="rgs-desc">Turn auto-run behaviours on or off here — handy when a
+                    system (e.g. strip) fires on open and leaves no chance to untick it.</div>`;
+
+            const toggle = (key, def, label, detail) => {
+                const on = GM_getValue(key, def);
+                const row = document.createElement("label");
+                row.className = "rgm-opt-row";
+                row.innerHTML = `
+                    <input type="checkbox" class="rgm-chk" ${on ? "checked" : ""}>
+                    <span class="rgm-opt-txt">
+                        <span class="rgm-opt-label">${label}</span>
+                        <span class="rgm-opt-detail">${detail}</span>
+                    </span>`;
+                row.querySelector("input").addEventListener("change", e => GM_setValue(key, e.target.checked));
+                return row;
+            };
+            autoSec.appendChild(toggle(AUTO_RENAME_KEY, true,
+                "Auto-rename after applying Release Group",
+                "Suggest Release Group renames immediately instead of showing the confirm popup."));
+            autoSec.appendChild(toggle(AUTO_STRIP_KEY, false,
+                "Auto-strip [network]- prefix after rename",
+                "Strip panel strips and renames the moment it opens, without waiting for confirm."));
+            body.appendChild(autoSec);
+
+            // ── Max languages ─────────────────────────────────────────────
+            const langSec = document.createElement("div"); langSec.className = "rgs-section";
+            langSec.innerHTML = `<div class="rgs-section-label">Max Languages</div>
+                <div class="rgs-desc">Cap on how many languages you can pick per Audio / Subtitle field.</div>`;
+            const row = document.createElement("div"); row.className = "rgs-add-row";
+            const input = document.createElement("input");
+            input.className = "rgs-input"; input.type = "number"; input.min = "1"; input.max = "12";
+            input.value = String(settings.maxLang ?? 4); input.style.maxWidth = "90px";
+            input.addEventListener("change", () => {
+                const n = Math.min(12, Math.max(1, parseInt(input.value, 10) || 4));
+                input.value = String(n);
+                settings.maxLang = n;
+                saveSettings(settings);
+                setMaxLang(n);
+            });
+            row.appendChild(input);
+            langSec.appendChild(row);
+            body.appendChild(langSec);
+        }
+
         if (name === "api") {
             // API Key section
             const sec = document.createElement("div"); sec.className = "rgs-section";
@@ -167,10 +234,10 @@ export function buildSettingsPanel() {
                         const pinned = LANG_PINNED.includes(code) ? " 📌" : "";
                         return `<span class="rgs-pill active" style="cursor:default">
                                     ${label} (${code})${pinned}
-                                    <span style="color:#89b;font-size:10px;margin-left:3px">×${count}</span>
+                                    <span style="color:var(--sg-faint);font-size:10px;margin-left:3px">×${count}</span>
                                 </span>`;
                     }).join("")
-                    : `<span style="color:#456;font-size:11px">No usage data yet.</span>`;
+                    : `<span style="color:var(--sg-muted);font-size:11px">No usage data yet.</span>`;
                 statSec.innerHTML = `
                     <div class="rgs-section-label">Language Usage Stats</div>
                     <div class="rgs-desc">Languages are sorted by usage in the picker. TH &amp; EN always appear first.</div>
